@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 """python -m examples.test_env
 """
 
-env_name = 'sokoban'  # 'minesweeper' or 'sokoban' or 'webshop' or 'alfworld'
+env_name = 'maze'  # 'minesweeper' or 'sokoban' or 'webshop' or 'alfworld'
 os.environ['ALFWORLD_DATA']='/your/alfworld/path' # only needed for alfworld
 
 def create_envs(config):
@@ -21,6 +21,8 @@ def create_envs(config):
         from agent_system.environments.minesweeper import make_envs
     elif env_name == 'alfworld':
         from agent_system.environments.alfworld import make_envs
+    elif env_name == 'maze':
+        from agent_system.environments.maze import make_envs
     elif env_name == 'webshop':
         from agent_system.environments.webshop import make_envs
     else:
@@ -52,6 +54,12 @@ def random_action(obs_list, info_list):
             actions.append(f"<action>({x}, {y})</action>")
     elif env_name == 'alfworld':
         actions = ['<action>'+np.random.choice(_info['admissible_commands'])+'</action>' for _info in info_list]
+    elif env_name == 'maze':
+        plan_length = 5
+        actions = []
+        for _ in range(len(info_list)):
+            action = ','.join([np.random.choice(["up", "down", "left", "right"]) for _ in range(plan_length)])
+            actions.append(f"<action>{action}</action>")
     elif env_name == 'webshop':
         from agent_system.environments.webshop.webshop.web_agent_site.models.models import RandomPolicy
         policy = RandomPolicy()
