@@ -1,3 +1,4 @@
+# TODO CHANGE: update trainer.default_local_dir (line ~83) to your scratch checkpoint dir
 set -x
 ENGINE=${1:-vllm}
 
@@ -80,6 +81,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=300 \
     trainer.val_before_train=True \
     trainer.log_val_generations=1 \
+    trainer.default_local_dir=/gpfs/scrubbed/mateogc/checkpoints/lamer/minesweeper_lamer_qwen3_4b \
     trainer.max_actor_ckpt_to_keep=1 \
     trainer.max_critic_ckpt_to_keep=1 \
     2>&1 | tee -a ../minesweeper_lamer_qwen3_4b.log

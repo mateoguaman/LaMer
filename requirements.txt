@@ -16,7 +16,7 @@ pre-commit
 ray[default]
 tensordict<=0.6.2
 torchdata
-transformers
+transformers<5.0
 vllm==0.8.5.post1
 wandb
 packaging>=20.0
@@ -26,3 +26,5 @@ qwen-vl-utils[decord]
 gym==0.26.2
 matplotlib
 gym_sokoban==0.0.6
+setuptools==74.1.3
+hf_transfer

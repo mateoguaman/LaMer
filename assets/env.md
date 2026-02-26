@@ -8,6 +8,8 @@ conda activate lamer
 
 pip3 install vllm==0.8.5
 
+conda install -c nvidia cuda-nvcc=12.4 cuda-toolkit=12.4
+
 pip3 install flash-attn==2.7.4.post1 --no-build-isolation --no-cache-dir
 pip install -r requirements.txt
 ```

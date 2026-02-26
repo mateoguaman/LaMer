@@ -1,19 +1,19 @@
 #!/bin/bash
-#SBATCH -D /gpfs/projects/weirdlab/mateo/projects/LaMer
+#SBATCH -D /gpfs/projects/weirdlab/mateo/projects/LaMer               # TODO CHANGE: path to your LaMer repo
 #SBATCH --job-name=lamer-minesweeper
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:4
-#SBATCH --cpus-per-task=50
-#SBATCH --mem=1128G
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=800G
 #SBATCH --time=24:00:00
-#SBATCH --output=/gpfs/scrubbed/mateogc/slurm_logs/%x-%j.out
-#SBATCH --error=/gpfs/scrubbed/mateogc/slurm_logs/%x-%j.err
+#SBATCH --output=/gpfs/scrubbed/mateogc/slurm_logs/%x-%j.out          # TODO CHANGE: your slurm log dir
+#SBATCH --error=/gpfs/scrubbed/mateogc/slurm_logs/%x-%j.err           # TODO CHANGE: your slurm log dir
 
 set -euo pipefail
 
-# source /gpfs/home/zchuning/mateo/setup_mateo.sh
+source /gpfs/home/mateogc/setup_mateo.sh                              # TODO CHANGE: path to your setup script
 
 module load conda/Miniforge3-25.3.1-3
 module load gcc/13.4.0
@@ -21,7 +21,7 @@ module load cmake/3.31.8
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 set +u
-conda activate lamer
+conda activate lamer                                                   # TODO CHANGE: your conda env name
 set -u
 echo "Environment activated!"
 echo "START TIME: $(date)"
@@ -39,8 +39,6 @@ export NCCL_TIMEOUT=1200000
 export HF_HUB_ETAG_TIMEOUT=60
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
-
-# export WANDB_API_KEY=your_key_here
 
 ######################
 ### Run Example ######
