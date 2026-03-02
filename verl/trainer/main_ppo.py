@@ -57,19 +57,24 @@ class TaskRunner:
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False))
 
-        if 'sokoban' in config.env.env_name.lower():
-            from agent_system.environments.sokoban import make_envs
-        elif 'minesweeper' in config.env.env_name.lower():
-            from agent_system.environments.minesweeper import make_envs
-        elif 'maze' in config.env.env_name.lower():
-            from agent_system.environments.maze import make_envs
-        elif 'alfworld' in config.env.env_name.lower():
-            from agent_system.environments.alfworld.env_manager import make_envs
-        elif 'webshop' in config.env.env_name.lower():
-            from agent_system.environments.webshop.env_manager import make_envs
+        if config.env.get('remote', False):
+            from agent_system.environments.remote import RemoteEnvironmentManager
+            envs = RemoteEnvironmentManager(config.env.remote_address)
+            val_envs = RemoteEnvironmentManager(config.env.remote_val_address)
         else:
-            raise NotImplementedError(f"Environment {config.env.env_name} is not supported.")
-        envs, val_envs = make_envs(config)
+            if 'sokoban' in config.env.env_name.lower():
+                from agent_system.environments.sokoban import make_envs
+            elif 'minesweeper' in config.env.env_name.lower():
+                from agent_system.environments.minesweeper import make_envs
+            elif 'maze' in config.env.env_name.lower():
+                from agent_system.environments.maze import make_envs
+            elif 'alfworld' in config.env.env_name.lower():
+                from agent_system.environments.alfworld.env_manager import make_envs
+            elif 'webshop' in config.env.env_name.lower():
+                from agent_system.environments.webshop.env_manager import make_envs
+            else:
+                raise NotImplementedError(f"Environment {config.env.env_name} is not supported.")
+            envs, val_envs = make_envs(config)
 
         # instantiate tokenizer
         from verl.utils import hf_processor, hf_tokenizer
