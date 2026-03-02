@@ -81,24 +81,50 @@ def _fixed_reflections(num_processes):
     ] * num_processes
 
 
+def _server_worker(config_yaml, port, is_train):
+    """Top-level function for the server subprocess (must be picklable)."""
+    import ray
+    from omegaconf import OmegaConf
+    from agent_system.environments.sokoban import make_envs
+    from agent_system.environments.remote.server import EnvServer
+
+    config = OmegaConf.create(config_yaml)
+    if not ray.is_initialized():
+        ray.init(log_to_driver=False)
+    train_envs, val_envs = make_envs(config)
+    env = train_envs if is_train else val_envs
+    server = EnvServer(env, host="127.0.0.1", port=port)
+    server.serve()
+
+
 def _start_server_process(config, port, is_train=False):
     """Start an EnvServer in a child process. Returns the Process."""
-    def _run():
-        import ray
-        from agent_system.environments.sokoban import make_envs
-        from agent_system.environments.remote.server import EnvServer
+    from omegaconf import OmegaConf
+    config_yaml = OmegaConf.to_yaml(config)
 
-        if not ray.is_initialized():
-            ray.init(log_to_driver=False)
-        train_envs, val_envs = make_envs(config)
-        env = train_envs if is_train else val_envs
-        server = EnvServer(env, host="127.0.0.1", port=port)
-        server.serve()
-
-    proc = multiprocessing.Process(target=_run, daemon=True)
+    proc = multiprocessing.Process(
+        target=_server_worker, args=(config_yaml, port, is_train), daemon=True
+    )
     proc.start()
-    # Give the server a moment to bind.
-    time.sleep(3)
+
+    # Wait for the server to bind — Ray init + env creation can take a while.
+    import socket as _socket
+    for attempt in range(30):
+        time.sleep(2)
+        if not proc.is_alive():
+            raise RuntimeError("Server process died during startup")
+        try:
+            s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+            s.settimeout(1)
+            s.connect(("127.0.0.1", port))
+            s.close()
+            break
+        except (ConnectionRefusedError, OSError):
+            pass
+    else:
+        raise RuntimeError(
+            f"Server on port {port} did not become ready after 60s"
+        )
     return proc
 
 

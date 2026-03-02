@@ -9,6 +9,106 @@ outcomes to the existing in-process path.
 
 ---
 
+## Setup & Running Tests
+
+### Prerequisites
+
+- Python 3.10+
+- A working CUDA installation (for `torch`), or CPU-only PyTorch
+
+### 1. Install Dependencies
+
+```bash
+# Core project dependencies (from repo root)
+pip install -r requirements.txt
+
+# Additional deps needed by the Sokoban environment and tests
+pip install torch omegaconf ray[default] gym==0.26.2 gym_sokoban==0.0.6 \
+            matplotlib Pillow transformers numpy
+```
+
+> **Note on numpy / gym compatibility**: `gym==0.26.2` prints a deprecation
+> warning about NumPy 2.0, but works correctly with `numpy<2`. If you have
+> `numpy>=2`, either downgrade (`pip install "numpy<2"`) or ignore the warning —
+> the tests pass either way.
+
+> **Note on antlr4 / setuptools**: `omegaconf` requires
+> `antlr4-python3-runtime==4.9.*`, which fails to build with
+> `setuptools>=67`. If you hit this, run:
+> ```bash
+> pip install "setuptools<67"
+> pip install "antlr4-python3-runtime==4.9.3"
+> pip install omegaconf
+> ```
+
+### 2. Run the Test Suite
+
+All tests are in `scripts/test_remote_env.py`. Each test automatically starts
+an environment server in a subprocess and connects to it — no manual server
+launch needed.
+
+```bash
+# Run all tests
+python scripts/test_remote_env.py --all
+
+# Run a single test
+python scripts/test_remote_env.py --test correctness
+python scripts/test_remote_env.py --test metarl
+python scripts/test_remote_env.py --test latency
+python scripts/test_remote_env.py --test throughput
+python scripts/test_remote_env.py --test large_batch
+python scripts/test_remote_env.py --test reconnection
+```
+
+### What Each Test Does
+
+| Test | Description | Runtime |
+|------|-------------|---------|
+| `correctness` | Runs identical reset/step sequences on local & remote envs with the same seed; asserts bit-identical observations, rewards, dones, infos | ~60s |
+| `metarl` | Full MetaRL loop: 3 attempts × 7 turns with reflection/restart between attempts; verifies properties, all intermediate obs, and `success_evaluator` | ~60s |
+| `latency` | Benchmarks per-operation p50/p95 latency for `reset` and `step` (local vs remote, 50 trials each) | ~60s |
+| `throughput` | Runs 20 complete episodes through both local and remote; reports episodes/second | ~30s |
+| `large_batch` | Spawns a server with `batch_size=64` and verifies serialization of large observation payloads | ~60s |
+| `reconnection` | Starts a server, connects, kills the server, verifies the client raises an error, restarts the server, verifies the client can reconnect | ~90s |
+
+### 3. Launch a Standalone Environment Server (optional)
+
+If you want to run the server and client separately (e.g. on different
+machines):
+
+```bash
+# Terminal 1: Start env server
+python scripts/launch_env_server.py \
+    --env_name sokoban \
+    --config verl/trainer/config/eval/sokoban.yaml \
+    --host 0.0.0.0 \
+    --port 50051 \
+    --mode val
+
+# Terminal 2: Connect from training code
+# In Python:
+from agent_system.environments.remote import RemoteEnvironmentManager
+env = RemoteEnvironmentManager("localhost:50051")
+obs, infos = env.reset()
+```
+
+### New Files (this branch)
+
+```
+agent_system/environments/remote/
+├── __init__.py          # Exports RemoteEnvironmentManager
+├── client.py            # RemoteEnvironmentManager (drop-in client)
+├── server.py            # EnvServer (wraps any EnvironmentManager)
+├── protocol.py          # Shared message types & wire format (TCP + pickle)
+└── launcher.py          # CLI launcher utility
+
+scripts/
+├── launch_env_server.py # Convenience script to start a server
+└── test_remote_env.py   # Test suite & benchmarks (this file)
+```
+
+---
+
 ## Architecture Overview
 
 ```
