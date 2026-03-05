@@ -134,7 +134,8 @@ wait_for_port ${VAL_PORT} "Validation" || exit 1
 echo ""
 echo "=== Running connection test ==="
 ${LANGTABLE_PYTHON} -m language_table.lamer.test_connection \
-    --host 127.0.0.1 --port ${TRAIN_PORT} --val_port ${VAL_PORT} --full
+    --host 127.0.0.1 --port ${TRAIN_PORT} --val_port ${VAL_PORT} --full \
+    --timeout 300
 echo "Connection test passed!"
 
 ########################################
