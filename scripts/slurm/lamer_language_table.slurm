@@ -10,6 +10,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --output=/gpfs/scrubbed/mateogc/slurm_logs/%x-%j.out          # TODO CHANGE: your slurm log dir
 #SBATCH --error=/gpfs/scrubbed/mateogc/slurm_logs/%x-%j.err           # TODO CHANGE: your slurm log dir
+# NOTE: also update trainer.default_local_dir below                   # TODO CHANGE: your scratch checkpoint dir
 
 set -euo pipefail
 
@@ -23,11 +24,13 @@ LANGTABLE_PYTHON="${LANGTABLE_DIR}/ltvenv/bin/python"
 
 TRAIN_PORT=50051
 VAL_PORT=50052
-TRAIN_NUM_ENVS=8
-VAL_NUM_ENVS=16
+TRAIN_NUM_ENVS=16
+VAL_NUM_ENVS=128
+GROUP_SIZE=8
 BLOCK_MODE="BLOCK_4"
 MAX_INNER_STEPS=100
 NUM_ATTEMPTS=3
+MAX_TURNS=1
 
 ######################
 ### Setup ############
@@ -72,18 +75,22 @@ echo "=== Starting Language Table env servers ==="
 echo "Starting training server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS} envs)..."
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${TRAIN_PORT} \
-    --num_envs ${TRAIN_NUM_ENVS} --block_mode ${BLOCK_MODE} \
+    --num_envs ${TRAIN_NUM_ENVS} --group_n ${GROUP_SIZE} \
+    --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
+    --max_turns ${MAX_TURNS} --do_reflection \
     &
 TRAIN_SERVER_PID=$!
-echo "Training server PID: ${TRAIN_SERVER_PID}"
+echo "Training server PID: ${TRAIN_SERVER_PID} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=$((TRAIN_NUM_ENVS * GROUP_SIZE)) workers)"
 
-# Validation server (background)
+# Validation server (background, group_n=1 — no grouping for eval)
 echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs)..."
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${VAL_PORT} \
-    --num_envs ${VAL_NUM_ENVS} --block_mode ${BLOCK_MODE} \
+    --num_envs ${VAL_NUM_ENVS} --group_n 1 \
+    --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
+    --max_turns ${MAX_TURNS} --do_reflection \
     &
 VAL_SERVER_PID=$!
 echo "Validation server PID: ${VAL_SERVER_PID}"
@@ -106,7 +113,7 @@ echo "=== Waiting for servers to become ready ==="
 wait_for_port() {
     local port=$1
     local name=$2
-    local max_attempts=60  # 2 min max (PyBullet init is slow)
+    local max_attempts=120  # 4 min max (128+ PyBullet workers take time to init)
     for i in $(seq 1 ${max_attempts}); do
         if nc -z 127.0.0.1 ${port} 2>/dev/null; then
             echo "  ${name} server ready on port ${port} (attempt ${i})"
@@ -139,7 +146,7 @@ cd ${LAMER_DIR}
 
 train_data_size=${TRAIN_NUM_ENVS}
 val_data_size=${VAL_NUM_ENVS}
-group_size=1
+group_size=${GROUP_SIZE}
 mode="mean_norm"
 reflection_type="reflection_only"
 
@@ -148,6 +155,8 @@ python3 -m examples.data_preprocess.prepare \
     --train_data_size ${train_data_size} \
     --val_data_size ${val_data_size}
 
+# NOTE: ppo_mini_batch_size must be <= train_data_size * group_size (currently 16*8=128).
+# For a smoke test with smaller sizes, lower ppo_mini_batch_size accordingly.
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=gigpo \
     data.train_files=$HOME/data/verl-agent/text/train.parquet \
@@ -194,11 +203,12 @@ python3 -m verl.trainer.main_ppo \
     algorithm.gigpo.mode=${mode} \
     reward_model.reward_manager=episode \
     env.env_name=language_table \
+    env.seed=0 \
     env.remote=True \
     env.remote_address=127.0.0.1:${TRAIN_PORT} \
     env.remote_val_address=127.0.0.1:${VAL_PORT} \
     env.num_attempts=${NUM_ATTEMPTS} \
-    env.max_turns=1 \
+    env.max_turns=${MAX_TURNS} \
     +env.reflection_type=${reflection_type} \
     env.rollout.n=${group_size} \
     trainer.critic_warmup=0 \
@@ -212,6 +222,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=300 \
     trainer.val_before_train=True \
     trainer.log_val_generations=1 \
+    trainer.default_local_dir=/gpfs/scrubbed/mateogc/checkpoints/lamer/language_table_lamer_qwen3_4b \
     trainer.max_actor_ckpt_to_keep=1 \
     trainer.max_critic_ckpt_to_keep=1 \
     2>&1 | tee -a ../language_table_lamer_qwen3_4b.log
