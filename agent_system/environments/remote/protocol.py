@@ -9,6 +9,7 @@ Wire format:
     [4 bytes: payload length (big-endian uint32)] [N bytes: pickle payload]
 """
 
+import io
 import pickle
 import struct
 import socket
@@ -60,12 +61,32 @@ def send_message(sock: socket.socket, obj: Any) -> None:
     sock.sendall(header + payload)
 
 
+class _CrossVenvUnpickler(pickle.Unpickler):
+    """Unpickler that resolves EnvRequest/EnvResponse from any module path.
+
+    The language-table server pickles these from ``language_table.lamer.protocol``
+    but the LaMer venv doesn't have that module.  This maps both known module
+    paths to the local classes so deserialization works across venvs.
+    """
+
+    _CLASS_MAP = {
+        ("language_table.lamer.protocol", "EnvRequest"): EnvRequest,
+        ("language_table.lamer.protocol", "EnvResponse"): EnvResponse,
+    }
+
+    def find_class(self, module: str, name: str):
+        key = (module, name)
+        if key in self._CLASS_MAP:
+            return self._CLASS_MAP[key]
+        return super().find_class(module, name)
+
+
 def recv_message(sock: socket.socket) -> Any:
     """Receive a length-prefixed frame and deserialize with pickle."""
     header = _recv_exact(sock, _HEADER_SIZE)
     (length,) = struct.unpack(_HEADER_FMT, header)
     payload = _recv_exact(sock, length)
-    return pickle.loads(payload)
+    return _CrossVenvUnpickler(io.BytesIO(payload)).load()
 
 
 def _recv_exact(sock: socket.socket, nbytes: int) -> bytes:

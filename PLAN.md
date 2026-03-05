@@ -641,3 +641,586 @@ stateless from the client's perspective (it manages its own env indices).
 3. `test_large_batch` works with batch_size=128
 4. Server and client can be started/stopped independently
 5. No changes to any existing training or rollout code
+
+---
+
+# V1: Sharded Remote Environments + VLA Inner Policy Support
+
+Everything below documents features built on top of the V0 remote environment
+system.  The V0 docs above remain accurate — sharded mode and VLA support are
+additive.
+
+---
+
+## Sharded Remote Environments
+
+### Overview
+
+`ShardedRemoteEnvironmentManager` fans out a single logical batch of
+environments across **N independent `EnvServer` processes** (shards), each
+running on a potentially different machine.  From the training loop's
+perspective it is a drop-in replacement for `RemoteEnvironmentManager` — same
+interface, same properties.
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                    TRAINING PROCESS                       │
+│                                                          │
+│  RayPPOTrainer                                           │
+│    └─ TrajectoryCollector                                │
+│         └─ ShardedRemoteEnvironmentManager               │
+│              ├─ RemoteEnvironmentManager → EnvServer 0   │──▶ envs [0, K)
+│              ├─ RemoteEnvironmentManager → EnvServer 1   │──▶ envs [K, 2K)
+│              └─ RemoteEnvironmentManager → EnvServer N-1 │──▶ envs [(N-1)K, N·K)
+│              ThreadPoolExecutor(N workers)                │
+└──────────────────────────────────────────────────────────┘
+```
+
+### How it works
+
+1. **Constructor** connects to each server address, queries `get_properties`
+   from every shard, validates that scalar properties (`num_attempts`,
+   `max_turns`, `do_reflection`) agree across all shards, and pre-computes
+   slice boundaries from each shard's `num_processes`.
+
+2. **`reset()` / `restart()` / `reflect()`** — dispatched in parallel via a
+   `ThreadPoolExecutor` (one thread per shard, I/O-bound socket waits).
+   Results are collected in shard order and merged:
+   - Observation dicts: per-key concatenation (lists are extended, ndarrays
+     are `np.concatenate`d).
+   - Info lists: flat concatenation.
+
+3. **`step(text_actions, phase)`** — the flat action list is sliced at shard
+   boundaries before dispatch.  Each shard receives only its slice.  Results
+   (obs, rewards, dones, infos) are merged the same way as reset.
+
+4. **`success_evaluator(**kwargs)`** — `total_infos` and `total_batch_list`
+   are sliced per shard.  Per-shard result dicts are merged by concatenating
+   numpy arrays per key.
+
+5. **`close()`** — closes all shard connections and shuts down the thread
+   pool.
+
+### Error semantics
+
+If any shard raises an exception during a parallel call, the exception
+propagates out of the `ThreadPoolExecutor` future and surfaces to the
+caller.  There is no automatic retry at the sharded level — the
+individual `RemoteEnvironmentManager` handles reconnection with
+exponential backoff (up to 4 retries).
+
+### Configuration
+
+```yaml
+# In your training YAML:
+env:
+  remote: true
+  sharded: true
+  remote_addresses:
+    - "host0:50051"
+    - "host1:50051"
+  remote_val_addresses:
+    - "host0:50052"
+    - "host1:50052"
+```
+
+The config branch in `main_ppo.py` (lines 60–68):
+
+```python
+if config.env.get('remote', False):
+    if config.env.get('sharded', False):
+        from agent_system.environments.remote import ShardedRemoteEnvironmentManager
+        envs = ShardedRemoteEnvironmentManager(list(config.env.remote_addresses))
+        val_envs = ShardedRemoteEnvironmentManager(list(config.env.remote_val_addresses))
+    else:
+        from agent_system.environments.remote import RemoteEnvironmentManager
+        envs = RemoteEnvironmentManager(config.env.remote_address)
+        val_envs = RemoteEnvironmentManager(config.env.remote_val_address)
+```
+
+### Resource Allocation
+
+The sharded environment code does **not** allocate hardware resources.  There is
+no GPU pinning, no CPU affinity setting, and no memory-limit enforcement inside
+`EnvServer`, `RemoteEnvironmentManager`, or `ShardedRemoteEnvironmentManager`.
+Resource isolation is entirely the **deployment layer's** responsibility.
+
+| Scenario | What you must do |
+|----------|-----------------|
+| **GPU-based envs (PyBullet VLA)** | Set `CUDA_VISIBLE_DEVICES` per server process so each sees only its assigned GPU(s). The VLA `device` string (e.g. `"cuda:0"`) is always relative to the visible set. |
+| **CPU-only envs (Sokoban)** | No special handling needed — each server spawns its own Sokoban instances in-process. |
+| **Slurm cluster** | Use `--gres=gpu:1` (or more) per `srun` / `sbatch` task. Slurm sets `CUDA_VISIBLE_DEVICES` automatically. |
+| **Kubernetes** | Use `resources.limits` with `nvidia.com/gpu` in your pod spec. The device plugin handles visibility. |
+
+What the code *does* control (but only locally):
+
+- **Ray actor `num_cpus` hints** — used when Ray actors are involved (local
+  mode). These are soft hints, not hard limits.
+- **VLA `device` string** — selects which (visible) CUDA device the model loads
+  onto. Defaults to `"cuda:0"`.
+- **Ray CPU cap** — `ray.init(num_cpus=N)` caps the local Ray scheduler, useful
+  for preventing oversubscription on shared machines.
+
+There is **no orchestrator** — you manually start N `EnvServer` processes
+(one per shard), then point the `ShardedRemoteEnvironmentManager` at their
+addresses.  The training process never SSH-es into remote machines or spawns
+servers on your behalf.
+
+### Running Sharded Locally
+
+#### CPU-only example (Sokoban, 2 shards)
+
+```bash
+# Terminal 1 — shard 0
+python -m agent_system.environments.remote.server \
+    --config configs/sokoban.yaml --port 50051
+
+# Terminal 2 — shard 1
+python -m agent_system.environments.remote.server \
+    --config configs/sokoban.yaml --port 50052
+
+# Terminal 3 — training
+python verl/trainer/main_ppo.py \
+    env.remote=true \
+    env.sharded=true \
+    env.remote_addresses='["localhost:50051","localhost:50052"]' \
+    env.remote_val_addresses='["localhost:50053","localhost:50054"]'
+```
+
+#### GPU example (VLA, 2 GPUs)
+
+```bash
+# Terminal 1 — shard 0 on GPU 0
+CUDA_VISIBLE_DEVICES=0 python -m agent_system.environments.remote.server \
+    --config configs/pybullet_vla.yaml --port 50051
+
+# Terminal 2 — shard 1 on GPU 1
+CUDA_VISIBLE_DEVICES=1 python -m agent_system.environments.remote.server \
+    --config configs/pybullet_vla.yaml --port 50052
+
+# Terminal 3 — training (same as above)
+python verl/trainer/main_ppo.py \
+    env.remote=true \
+    env.sharded=true \
+    env.remote_addresses='["localhost:50051","localhost:50052"]' \
+    env.remote_val_addresses='["localhost:50053","localhost:50054"]'
+```
+
+Each server process sees only its assigned GPU because of
+`CUDA_VISIBLE_DEVICES`.  The VLA model inside the server loads onto `cuda:0`,
+which maps to the physical GPU you exposed.
+
+---
+
+## PyBullet VLA Environment Manager
+
+### Two-loop architecture
+
+The PyBullet VLA setup introduces a **two-loop architecture**:
+
+```
+┌─────────────────── OUTER LOOP (LLM) ────────────────────┐
+│  LLM generates goal strings (natural language)           │
+│    ↓                                                     │
+│  PyBulletVLAEnvironmentManager.step(goal_strings)        │
+│    ↓                                                     │
+│  ┌────────── INNER LOOP (VLA) ──────────────────┐        │
+│  │  for inner_step in range(max_inner_steps):   │        │
+│  │    vla_actions = vla.predict(goals, obs, mask)│        │
+│  │    obs, rew, done, info = pybullet.step(act)  │        │
+│  │    accumulate rewards, update active_mask     │        │
+│  └──────────────────────────────────────────────┘        │
+│    ↓                                                     │
+│  state_to_text(final_pybullet_state) → text obs for LLM │
+└──────────────────────────────────────────────────────────┘
+```
+
+- **Outer loop**: The LLM sees text descriptions of robot/scene state and
+  produces natural-language goal strings.
+- **Inner loop**: A frozen VLA policy executes in the pybullet simulator for
+  up to `max_inner_steps`, translating the LLM's goal into low-level actions.
+- The LLM never sees raw images or joint angles — `state_to_text` converts
+  pybullet state dicts into readable descriptions.
+
+### File reference
+
+| File | Purpose |
+|------|---------|
+| `agent_system/environments/pybullet_vla/__init__.py` | Exports `PyBulletVLAEnvironmentManager`, `make_envs`, `VLAPolicy`, `DummyVLAPolicy`, `state_to_text`, `batch_state_to_text` |
+| `agent_system/environments/pybullet_vla/env_manager.py` | `PyBulletVLAEnvironmentManager` class + `make_envs` factory |
+| `agent_system/environments/pybullet_vla/vla_policy.py` | `VLAPolicy` ABC + `DummyVLAPolicy` placeholder |
+| `agent_system/environments/pybullet_vla/state_to_text.py` | `state_to_text` / `batch_state_to_text` — pybullet dict → text |
+
+### `PyBulletVLAEnvironmentManager`
+
+Extends `EnvironmentManagerBase`.  Constructor takes:
+- `envs` — vectorised pybullet env (gym-like with `reset()`, `step()`,
+  `restart()`, `close()`, `num_processes`)
+- `vla_policy` — a `VLAPolicy` instance (frozen)
+- `config` — OmegaConf config
+
+Key config keys under `config.env`:
+- `num_attempts` (default 1) — meta-RL attempts
+- `max_turns` (default 1) — outer LLM turns per attempt
+- `do_reflection` (default False) — enable reflect/restart cycle
+- `max_inner_steps` (default 100) — VLA inner-loop budget
+- `reward_shaping` (default `"sum"`) — how inner rewards are aggregated
+
+**Inner loop details** (`_handle_play_step`):
+1. Gets current pybullet observations (via `envs.get_obs()` if available).
+2. Calls `vla.predict(goal_strings, observations, active_mask)` each inner
+   step.
+3. Steps pybullet envs with VLA actions.
+4. Accumulates rewards for active envs, updates `active_mask` as envs finish.
+5. Early-exits when all envs are done; marks timed-out envs as done.
+6. Converts final pybullet state to text via `batch_state_to_text`.
+
+### `state_to_text` expected dict format
+
+Each pybullet state dict should contain:
+
+```python
+{
+    "ee_position": (x, y, z),           # end-effector position
+    "gripper_state": float,              # 0=closed, 1=open
+    "joint_positions": [j0, j1, ...],    # joint angles
+    "object_poses": {                    # scene objects
+        "cube": ((x,y,z), (qx,qy,qz,qw)),
+        "target": ((x,y,z), (qx,qy,qz,qw)),
+    },
+    "task_info": "optional task description",  # optional
+}
+```
+
+Additional keys are silently ignored (forward-compatible).
+
+### `VLAPolicy` ABC
+
+Abstract base class with two methods to override:
+
+```python
+class VLAPolicy(ABC):
+    def _load_model(self) -> None: ...      # Load checkpoint into self.model
+    def _forward(self, goals, observations, active_mask) -> np.ndarray: ...
+```
+
+`predict()` is the public entry point — it delegates to `_forward` and
+handles the zero-active-envs case.
+
+### `DummyVLAPolicy`
+
+Returns `np.random.uniform(-1, 1, (batch, action_dim))`.  Used when no
+checkpoint is provided (testing mode).  `action_dim` defaults to 7
+(typical robot arm + gripper).
+
+### Implementing a real VLA
+
+1. Subclass `VLAPolicy`.
+2. Override `_load_model()` to load your checkpoint (RT-2, Octo, OpenVLA,
+   etc.).
+3. Override `_forward()` to run inference.  Receives goal strings,
+   per-env observation dicts, and an active mask.  Return actions as a
+   numpy array of shape `(batch, action_dim)`.
+4. Either register in the `make_envs` factory or pass directly to
+   `PyBulletVLAEnvironmentManager`.
+
+### `make_envs` factory contract
+
+```python
+def make_envs(config) -> tuple[PyBulletVLAEnvironmentManager, PyBulletVLAEnvironmentManager]:
+```
+
+Expected config keys under `config.env.pybullet_vla`:
+- `vla_checkpoint` — path to VLA checkpoint (empty string → `DummyVLAPolicy`)
+- `vla_device` — torch device (default `"cuda"`)
+- `vla_batch_size` — max VLA batch size (default 128)
+- `action_dim` — action dimensions (default 7, used by `DummyVLAPolicy`)
+- `env_factory` — dotted import path to a `build_envs(num_envs, is_train, **kwargs)` function
+- `env_kwargs` — dict passed through to `env_factory`
+
+The `pybullet_vla` env type is registered in `launcher.py`'s `_ENV_FACTORIES`
+dict, so it can be served remotely:
+
+```bash
+python scripts/launch_env_server.py \
+    --env_name pybullet_vla \
+    --config your_config.yaml \
+    --host 0.0.0.0 --port 50051
+```
+
+---
+
+## Configuration Reference
+
+### Single-server remote (V0)
+
+```yaml
+env:
+  remote: true
+  remote_address: "host:50051"
+  remote_val_address: "host:50052"
+```
+
+### Sharded remote (V1)
+
+```yaml
+env:
+  remote: true
+  sharded: true
+  remote_addresses:
+    - "host0:50051"
+    - "host1:50051"
+  remote_val_addresses:
+    - "host0:50052"
+    - "host1:50052"
+```
+
+### PyBullet VLA
+
+```yaml
+env:
+  env_name: pybullet_vla
+  num_attempts: 3
+  max_turns: 1
+  do_reflection: true
+  max_inner_steps: 100
+  reward_shaping: sum
+  pybullet_vla:
+    vla_checkpoint: ""          # empty → DummyVLAPolicy
+    vla_device: "cuda"
+    vla_batch_size: 128
+    action_dim: 7
+    env_factory: "my_module.build_pybullet_envs"
+    env_kwargs:
+      task: "pick_and_place"
+      render: false
+```
+
+---
+
+## Deployment: Slurm (Sharded)
+
+### Job array pattern
+
+Each environment shard runs as a separate Slurm job.  Each job writes its
+`hostname:port` to a shared directory that the training job reads.
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=env-shard
+#SBATCH --array=0-3              # 4 shards
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=32G
+#SBATCH --gres=gpu:0
+
+PORT=$((50051 + SLURM_ARRAY_TASK_ID))
+ADDR_DIR=/shared/env_server_addresses
+mkdir -p $ADDR_DIR
+
+echo "$(hostname):${PORT}" > "${ADDR_DIR}/shard_${SLURM_ARRAY_TASK_ID}.txt"
+
+python scripts/launch_env_server.py \
+    --env_name sokoban \
+    --config config.yaml \
+    --host 0.0.0.0 \
+    --port $PORT \
+    --mode train
+```
+
+### Training job reads addresses
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=lamer-train
+#SBATCH --gres=gpu:4
+#SBATCH --dependency=afterok:<env_shard_job_id>
+
+ADDR_DIR=/shared/env_server_addresses
+
+# Collect all shard addresses into a comma-separated list.
+ADDRESSES=""
+for f in ${ADDR_DIR}/shard_*.txt; do
+    addr=$(cat "$f")
+    ADDRESSES="${ADDRESSES:+$ADDRESSES,}$addr"
+done
+
+python -m verl.trainer.main_ppo \
+    env.remote=true \
+    env.sharded=true \
+    "env.remote_addresses=[$ADDRESSES]"
+```
+
+---
+
+## Deployment: Kubernetes (Sharded)
+
+### StatefulSet for env servers
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: env-server
+spec:
+  serviceName: env-server
+  replicas: 4
+  selector:
+    matchLabels:
+      app: env-server
+  template:
+    metadata:
+      labels:
+        app: env-server
+    spec:
+      containers:
+      - name: env-server
+        image: lamer-env-server:latest
+        command:
+          - python
+          - scripts/launch_env_server.py
+          - --env_name=sokoban
+          - --config=/config/train.yaml
+          - --host=0.0.0.0
+          - --port=50051
+        ports:
+        - containerPort: 50051
+        resources:
+          requests:
+            cpu: "8"
+            memory: "16Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: env-server
+spec:
+  clusterIP: None   # headless — each pod gets its own DNS
+  selector:
+    app: env-server
+  ports:
+  - port: 50051
+```
+
+### ConfigMap for training pod
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: env-addresses
+data:
+  addresses: |
+    env-server-0.env-server:50051
+    env-server-1.env-server:50051
+    env-server-2.env-server:50051
+    env-server-3.env-server:50051
+```
+
+The training pod reads the ConfigMap and connects:
+
+```yaml
+env:
+  remote: true
+  sharded: true
+  remote_addresses:
+    - "env-server-0.env-server:50051"
+    - "env-server-1.env-server:50051"
+    - "env-server-2.env-server:50051"
+    - "env-server-3.env-server:50051"
+```
+
+---
+
+## Sharded Test Suite (`scripts/test_sharded_env.py`)
+
+### Running tests
+
+```bash
+# Run all tests
+python scripts/test_sharded_env.py --all
+
+# Run a single test
+python scripts/test_sharded_env.py --test correctness
+python scripts/test_sharded_env.py --test properties
+python scripts/test_sharded_env.py --test step_slicing
+python scripts/test_sharded_env.py --test shard_failure
+python scripts/test_sharded_env.py --test latency
+```
+
+All tests automatically start `EnvServer` subprocesses and connect to them —
+no manual server launch needed.  Uses `multiprocessing.set_start_method("spawn")`
+for clean subprocess isolation.
+
+### How the tests work internally
+
+Tests use Python's `multiprocessing` module to spawn real `EnvServer` processes
+and connect to them over TCP, exercising the full client–server path.
+
+**`_server_worker` (line 75)** — A top-level module function (not a lambda or
+closure) that creates a Sokoban environment and starts an `EnvServer`.  It must
+be a top-level function because `multiprocessing.Process` with
+`start_method="spawn"` needs to pickle the target callable.  The OmegaConf
+config is serialized to YAML *before* being passed to the subprocess (raw
+OmegaConf objects aren't reliably picklable across spawn boundaries).
+
+**`_start_server_process` (line 91)** — Spawns the subprocess via
+`multiprocessing.Process(target=_server_worker, ...)`, then polls readiness by
+attempting `socket.connect()` every 2 seconds for up to 60 seconds (30 attempts
+× 2s).  If the process dies during startup, it raises immediately rather than
+waiting for the timeout.
+
+**`test_correctness` (line 195)** — The most comprehensive test.  Starts **4
+servers** on consecutive ports: 2 for the sharded client, and 2 as independent
+"reference" clients.  All 4 use the same config (same seed), so given the same
+actions the reference clients produce identical output to the sharded pair.  The
+test runs `reset()` + 5 `step()` calls through both paths and asserts that the
+sharded output exactly equals the manual concatenation of the two individual
+reference outputs (`np.concatenate` for arrays, list concatenation for infos).
+
+**CPU-only** — All tests use Sokoban (CPU-only).  They validate the fan-out,
+slicing, and merge mechanics of `ShardedRemoteEnvironmentManager`, not GPU
+resource allocation.  GPU-based environments (VLA) are tested separately.
+
+**`set_start_method("spawn")`** — Called at test startup to avoid fork-related
+issues with Ray.  Forking a process that has already initialized Ray can lead to
+deadlocks or corrupted state; `spawn` starts a fresh Python interpreter for each
+subprocess.
+
+### What each test does
+
+| Test | Description | Setup |
+|------|-------------|-------|
+| `correctness` | Starts 4 servers (2 for sharded client, 2 as individual references). Runs reset + 5 steps through both. Asserts sharded output equals manual concatenation of individual client outputs. | 2 envs/shard, 4 total |
+| `properties` | Connects a sharded client to 2 servers (3 envs each). Verifies `num_processes=6`, and that `num_attempts`, `max_turns`, `do_reflection` match across shards. | 3 envs/shard |
+| `step_slicing` | Verifies that actions `[0:N]` go to shard 0 and `[N:2N]` go to shard 1 by checking output shapes match the total batch size. | 2 envs/shard |
+| `shard_failure` | Connects to 2 shards, kills one server, verifies the next `step()` raises `ConnectionError` / `RuntimeError` / `OSError`. | 2 envs/shard |
+| `latency` | Benchmarks 1×8 (single server) vs 2×4 (sharded) over 20 trials. Reports p50/p95 latency for reset and step. | 8 total envs |
+
+---
+
+## New Files Summary (this branch)
+
+```
+agent_system/environments/remote/
+├── __init__.py              # Exports RemoteEnvironmentManager, EnvServer,
+│                            #   ShardedRemoteEnvironmentManager
+├── client.py                # RemoteEnvironmentManager (drop-in client)
+├── server.py                # EnvServer (wraps any EnvironmentManager)
+├── protocol.py              # Shared message types & wire format (TCP + pickle)
+├── launcher.py              # CLI launcher — _ENV_FACTORIES includes pybullet_vla
+└── sharded_client.py        # ShardedRemoteEnvironmentManager (fan-out to N servers)
+
+agent_system/environments/pybullet_vla/
+├── __init__.py              # Exports PyBulletVLAEnvironmentManager, make_envs,
+│                            #   VLAPolicy, DummyVLAPolicy, state_to_text,
+│                            #   batch_state_to_text
+├── env_manager.py           # PyBulletVLAEnvironmentManager + make_envs factory
+├── vla_policy.py            # VLAPolicy ABC + DummyVLAPolicy (random actions)
+└── state_to_text.py         # Pybullet state dict → natural language text
+
+scripts/
+├── launch_env_server.py     # CLI entry point for starting env servers
+├── test_remote_env.py       # V0 single-server test suite
+└── test_sharded_env.py      # V1 sharded test suite (5 tests)
+```

@@ -110,18 +110,40 @@ class RemoteEnvironmentManager:
     # ------------------------------------------------------------------
 
     def _connect(self):
-        """Establish (or re-establish) the TCP connection."""
+        """Establish (or re-establish) the TCP connection.
+
+        Retries with exponential backoff if the server is not yet listening
+        (e.g. PyBullet workers still initializing on SLURM).
+        """
         if self._socket is not None:
             try:
                 self._socket.close()
             except Exception:
                 pass
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(self._timeout)
-        sock.connect((self._host, self._port))
-        self._socket = sock
-        logger.info("Connected to EnvServer at %s:%s", self._host, self._port)
+        backoff = _INITIAL_BACKOFF_S
+        last_exc = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(self._timeout)
+                sock.connect((self._host, self._port))
+                self._socket = sock
+                logger.info("Connected to EnvServer at %s:%s", self._host, self._port)
+                return
+            except (ConnectionRefusedError, OSError) as exc:
+                last_exc = exc
+                logger.warning(
+                    "Connect attempt %d/%d to %s:%s failed: %s — retrying in %ds",
+                    attempt + 1, _MAX_RETRIES, self._host, self._port, exc, backoff,
+                )
+                time.sleep(backoff)
+                backoff *= 2
+
+        raise ConnectionRefusedError(
+            f"Could not connect to {self._host}:{self._port} "
+            f"after {_MAX_RETRIES} attempts"
+        ) from last_exc
 
     def _call(self, method: str, *args, **kwargs):
         """Send a request, receive the response, retry on connection errors."""

@@ -25,6 +25,7 @@ _ENV_FACTORIES = {
     "maze": "agent_system.environments.maze",
     "alfworld": "agent_system.environments.alfworld",
     "webshop": "agent_system.environments.webshop",
+    "pybullet_vla": "agent_system.environments.pybullet_vla",
 }
 
 

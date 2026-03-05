@@ -11,7 +11,7 @@ warnings.filterwarnings('ignore')
 """python -m examples.test_env
 """
 
-env_name = 'maze'  # 'minesweeper' or 'sokoban' or 'webshop' or 'alfworld'
+env_name = 'language_table'  # 'minesweeper' or 'sokoban' or 'webshop' or 'alfworld' or 'language_table'
 os.environ['ALFWORLD_DATA']='/your/alfworld/path' # only needed for alfworld
 
 def create_envs(config):
@@ -25,9 +25,11 @@ def create_envs(config):
         from agent_system.environments.maze import make_envs
     elif env_name == 'webshop':
         from agent_system.environments.webshop import make_envs
+    elif env_name == 'language_table':
+        from agent_system.environments.language_table import make_envs
     else:
         raise ValueError(f"Unsupported environment: {env_name}")
-    
+
     return make_envs(config)
 
 def init_config() -> DictConfig:
@@ -68,10 +70,44 @@ def random_action(obs_list, info_list):
             available_actions = _info['available_actions']
             action = policy.forward('', available_actions)
             actions.append(f"<action>{action}</action>")
+    elif env_name == 'language_table':
+        actions = [f"<action>push the red star to the blue cube</action>"] * len(info_list)
     else:
         raise ValueError(f"Unsupported environment: {env_name}")
-    
+
     return actions
+
+def run_meta_rl_episode(envs, N, num_attempts=3, max_turns=7, label=""):
+    """Run a full meta-RL episode: num_attempts × (max_turns steps + reflect + restart).
+
+    This mirrors what TrajectoryCollector.multi_turn_loop does in real training.
+    """
+    prompts = []
+
+    obs_list, info_list = envs.reset()
+    prompts.append(f'[{label} Attempt 0]\n' + obs_list['text'][0])
+
+    for traj_idx in range(num_attempts):
+        if traj_idx >= 1:
+            obs_list, info_list = envs.reflect()
+            prompts.append(f'[{label} Reflection]\n' + obs_list['text'][0])
+
+            reflections = ['<remark>In my previous trial, I did ... I should have ...</remark>'] * N
+            obs_list, reward_list, done_list, info_list = envs.step(reflections, phase='reflect')
+
+            obs_list, info_list = envs.restart()
+            prompts.append(f'[{label} Attempt {traj_idx}]\n' + obs_list['text'][0])
+
+        for _ in range(max_turns):
+            actions = random_action(obs_list, info_list)
+            obs_list, reward_list, done_list, info_list = envs.step(actions, phase='play')
+            prompts.append(f'[{label} Attempt {traj_idx}]\n' + obs_list['text'][0])
+
+            if np.all(done_list):
+                break
+
+    return prompts
+
 
 def main():
     ray.init(log_to_driver=False)
@@ -81,33 +117,38 @@ def main():
     print(config.env)
     N = config.data.val_batch_size
 
-    _, val_envs = create_envs(config)
+    train_envs, val_envs = create_envs(config)
 
-    prompts = []
-    obs_list, info_list = val_envs.reset()
-    prompts.append('[Attempt 0]\n' + obs_list['text'][0])
+    num_epochs = 6
+    test_freq = 3  # validate every 3 epochs
 
-    for traj_idx in range(3):
-        if traj_idx >= 1:
-            obs_list, info_list = val_envs.reflect()
-            prompts.append('[Reflection]\n' + obs_list['text'][0])
+    for epoch in range(num_epochs):
+        print(f"\n{'='*60}")
+        print(f"Epoch {epoch}")
+        print(f"{'='*60}")
 
-            reflections = ['<remark>In my previous trial, I did ... I should have ...</remark>'] * N
-            obs_list, reward_list, done_list, info_list = val_envs.step(reflections, phase='reflect')
+        # -- Training rollout (every epoch) --
+        print(f"\n--- Train rollout (epoch {epoch}) ---")
+        train_prompts = run_meta_rl_episode(
+            train_envs, N, label=f"Train E{epoch}")
+        for p in train_prompts:
+            print(p)
 
-            obs_list, info_list = val_envs.restart()
-            prompts.append(f'[Attempt {traj_idx}]\n' + obs_list['text'][0])
+        # -- Validation (periodic) --
+        if epoch % test_freq == 0:
+            print(f"\n--- Validation (epoch {epoch}) ---")
+            val_prompts = run_meta_rl_episode(
+                val_envs, N, label=f"Val E{epoch}")
+            for p in val_prompts:
+                print(p)
 
-        for _ in range(7):
-            actions = random_action(obs_list, info_list)
-            obs_list, reward_list, done_list, info_list = val_envs.step(actions, phase='play')
-            prompts.append(f'[Attempt {traj_idx}]\n' + obs_list['text'][0])
+    # ---- Cleanup ----
+    print(f"\n{'='*60}")
+    print("Closing connections...")
+    train_envs.close()
+    val_envs.close()
+    print("Done.")
 
-            if np.all(done_list):
-                break
-
-    for prompt in prompts:
-        print(prompt)
 
 if __name__ == '__main__':
     main()

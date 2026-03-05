@@ -1,0 +1,119 @@
+checkpoint_path: null
+n_rounds: 4
+suffix: ""
+
+trainer:
+  nnodes: 1
+  n_gpus_per_node: 4
+
+data:
+  path: /home/runai-home/data/verl-agent/text/test.parquet
+  prompt_key: prompt
+  n_samples: 5
+  output_path: outputs
+  train_batch_size: 1
+  val_batch_size: 2
+  trust_remote_code: False
+  custom_cls:
+      path: null
+      name: null
+  use_shm: False
+  reward_fn_key: data_source
+  max_prompt_length: 2048
+  max_response_length: 1024
+  return_raw_input_ids: False
+  return_raw_chat: True
+  return_full_prompt: False
+  shuffle: True
+  filter_overlong_prompts: False
+  filter_overlong_prompts_workers: 1
+  truncation: error
+  image_key: images
+  video_key: videos
+
+model:
+  path: Qwen/Qwen3-4B
+  external_lib: null
+rollout:
+  name: vllm
+  mode: sync
+  temperature: 1.0
+  top_k: 50
+  top_p: 0.7
+  prompt_length: 2048
+  response_length: 1024
+  repetition_penalty: 1.05
+  dtype: bfloat16
+  gpu_memory_utilization: 0.8
+  ignore_eos: False
+  enforce_eager: False
+  free_cache_engine: False
+  load_format: dummy_dtensor
+  tensor_model_parallel_size: 2
+  max_num_batched_tokens: 16384
+  max_model_len: null
+  max_num_seqs: 1024
+  log_prob_micro_batch_size: null
+  log_prob_micro_batch_size_per_gpu: 8
+  use_fire_sampling: False
+  do_sample: True
+  disable_log_stats: True
+  enable_chunked_prefill: True
+  n: 1
+
+  val_kwargs:
+    top_k: 20
+    top_p: 0.8
+    temperature: 0.7
+    n: 1
+    do_sample: True
+    repetition_penalty: 1.05
+
+  multi_turn:
+    enable: False
+    max_turns: null
+    tool_config_path: null
+    format: chatml
+
+actor:
+  strategy: fsdp
+  ulysses_sequence_parallel_size: 1
+  fsdp_config:
+    fsdp_size: -1
+
+ray_init:
+  num_cpus: null
+
+algorithm:
+  gamma: 0.95
+  lam: 1.0
+  adv_estimator: gigpo
+  norm_adv_by_std_in_grpo: True
+  use_kl_in_reward: False
+  kl_penalty: kl
+  kl_ctrl:
+    type: fixed
+    kl_coef: 0.001
+    horizon: 10000
+    target_kl: 0.1
+  use_pf_ppo: False
+  pf_ppo:
+    reweight_method: pow
+    weight_pow: 2.0
+  gigpo:
+    step_advantage_w: 1.0
+    mode: "mean_norm"
+  filter_groups:
+    enable: False
+    max_num_gen_batches: 10
+
+env:
+  env_name: language_table
+  seed: 0
+  remote: True
+  remote_address: "localhost:50051"
+  remote_val_address: "localhost:50052"
+  num_attempts: 3
+  max_turns: 1
+  rollout:
+    n: 1
