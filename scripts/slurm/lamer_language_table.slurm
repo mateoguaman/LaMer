@@ -205,9 +205,9 @@ python3 -m verl.trainer.main_ppo \
     reward_model.reward_manager=episode \
     env.env_name=language_table \
     env.seed=0 \
-    env.remote=True \
-    env.remote_address=127.0.0.1:${TRAIN_PORT} \
-    env.remote_val_address=127.0.0.1:${VAL_PORT} \
+    +env.remote=True \
+    +env.remote_address=127.0.0.1:${TRAIN_PORT} \
+    +env.remote_val_address=127.0.0.1:${VAL_PORT} \
     env.num_attempts=${NUM_ATTEMPTS} \
     env.max_turns=${MAX_TURNS} \
     +env.reflection_type=${reflection_type} \
