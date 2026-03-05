@@ -9,7 +9,10 @@ The TrajectoryCollector and RayPPOTrainer never know the difference.
 import logging
 import socket
 import time
+from collections import defaultdict
 from uuid import uuid4
+
+import numpy as np
 
 from .protocol import EnvRequest, EnvResponse, send_message, recv_message
 
@@ -88,8 +91,33 @@ class RemoteEnvironmentManager:
         return self._call("reflect")
 
     def success_evaluator(self, **kwargs):
-        """Returns ``Dict[str, np.ndarray]``."""
-        return self._call("success_evaluator", **kwargs)
+        """Evaluate episode success locally (no TCP round-trip needed).
+
+        This is pure data analysis over trajectory info dicts — sending the
+        full trajectory data over the wire would exceed the 4 GB protocol
+        limit for large batch sizes.
+        """
+        total_infos = kwargs["total_infos"]
+        total_batch_list = kwargs["total_batch_list"]
+        batch_size = len(total_batch_list)
+
+        success = defaultdict(list)
+        for bs in range(batch_size):
+            wons = [False for _ in range(self._num_attempts)]
+            for i in reversed(range(len(total_batch_list[bs]))):
+                batch_item = total_batch_list[bs][i]
+                if batch_item["active_masks"]:
+                    info = total_infos[bs][i]
+                    traj_idx = batch_item["traj_idx"]
+                    if batch_item["phase"] == "play":
+                        wons[traj_idx] = wons[traj_idx] or info.get("won", False)
+
+            _won = False
+            for traj_idx, won in enumerate(wons):
+                _won = _won or won
+                success[f"success_rate[{traj_idx}]"].append(_won)
+
+        return {key: np.array(value) for key, value in success.items()}
 
     def close(self):
         """Tell the server we are done, then close the socket."""
