@@ -32,6 +32,10 @@ MAX_INNER_STEPS=100
 NUM_ATTEMPTS=3
 MAX_TURNS=1
 
+# VLA (inner-loop policy) — set to "" to use random actions
+VLA_CHECKPOINT_DIR="/gpfs/scrubbed/mateogc/checkpoints/language_table"       # TODO CHANGE: path to store the LAVA checkpoint
+VLA_CHECKPOINT="${VLA_CHECKPOINT_DIR}/bc_resnet_sim_checkpoint_955000"
+
 ######################
 ### Setup ############
 ######################
@@ -66,10 +70,30 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
 
 ########################################
+### Step 0: Download VLA checkpoint ####
+########################################
+if [ -n "${VLA_CHECKPOINT}" ] && [ ! -f "${VLA_CHECKPOINT}" ]; then
+    echo "=== Downloading LAVA checkpoint ==="
+    mkdir -p "${VLA_CHECKPOINT_DIR}"
+    wget -q --show-progress -O "${VLA_CHECKPOINT}" \
+        "https://storage.googleapis.com/gresearch/robotics/language_table_checkpoints/bc_resnet_sim_checkpoint_955000"
+    echo "Downloaded to ${VLA_CHECKPOINT}"
+fi
+
+########################################
 ### Step 1: Start env servers ##########
 ########################################
 echo ""
 echo "=== Starting Language Table env servers ==="
+
+# Build VLA flag (empty string if no checkpoint)
+VLA_FLAG=""
+if [ -n "${VLA_CHECKPOINT}" ] && [ -f "${VLA_CHECKPOINT}" ]; then
+    VLA_FLAG="--vla_checkpoint ${VLA_CHECKPOINT}"
+    echo "VLA enabled: ${VLA_CHECKPOINT}"
+else
+    echo "WARNING: No VLA checkpoint found at '${VLA_CHECKPOINT}' — using random actions"
+fi
 
 # Training server (background)
 echo "Starting training server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS} envs)..."
@@ -79,6 +103,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
+    ${VLA_FLAG} \
     &
 TRAIN_SERVER_PID=$!
 echo "Training server PID: ${TRAIN_SERVER_PID} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=$((TRAIN_NUM_ENVS * GROUP_SIZE)) workers)"
@@ -91,6 +116,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
+    ${VLA_FLAG} \
     &
 VAL_SERVER_PID=$!
 echo "Validation server PID: ${VAL_SERVER_PID}"

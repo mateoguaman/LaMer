@@ -43,10 +43,12 @@ PyBullet) and communicates with LaMer over TCP. See the full setup instructions 
 **Quick start:**
 
 ```bash
-# 1. Start env servers (in the language-table repo, separate terminals)
+# 1. Start env servers with VLA (in the language-table repo, separate terminals)
 cd /path/to/language-table && export PYTHONPATH=${PWD}:$PYTHONPATH
-ltvenv/bin/python -m language_table.lamer.server_main --port 50051 --num_envs 8 --num_attempts 3
-ltvenv/bin/python -m language_table.lamer.server_main --port 50052 --num_envs 16 --num_attempts 3
+ltvenv/bin/python -m language_table.lamer.server_main --port 50051 --num_envs 8 --num_attempts 3 \
+    --vla_checkpoint /path/to/checkpoints/bc_resnet_sim_checkpoint_955000
+ltvenv/bin/python -m language_table.lamer.server_main --port 50052 --num_envs 16 --num_attempts 3 \
+    --vla_checkpoint /path/to/checkpoints/bc_resnet_sim_checkpoint_955000
 
 # 2. Run LaMer training (in this repo)
 python3 -m verl.trainer.main_ppo \
@@ -57,6 +59,19 @@ python3 -m verl.trainer.main_ppo \
     env.num_attempts=3 \
     ... # other config
 ```
+
+The `--vla_checkpoint` flag loads the pre-trained LAVA policy for the inner loop.
+Without it, the server falls back to random actions. The checkpoint is downloaded
+automatically on first run (see the SLURM script), or manually:
+
+```bash
+wget -O /path/to/checkpoints/bc_resnet_sim_checkpoint_955000 \
+    https://storage.googleapis.com/gresearch/robotics/language_table_checkpoints/bc_resnet_sim_checkpoint_955000
+```
+
+**Docs:**
+- [VLA integration plan and design decisions](docs/vla_integration.md)
+- [How to integrate a custom VLA](docs/custom_vla.md)
 
 
 ## Acknowledgements
