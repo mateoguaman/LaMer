@@ -1,6 +1,11 @@
-# TODO CHANGE: update trainer.default_local_dir (line ~83) to your scratch checkpoint dir
 set -x
 ENGINE=${1:-vllm}
+TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-$HOME/data/verl-agent/text/train.parquet}
+VAL_DATA_PATH=${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}
+CHECKPOINT_ROOT=${CHECKPOINT_ROOT:-${SCRATCH:-$HOME}/checkpoints/lamer}
+RUN_NAME=${RUN_NAME:-minesweeper_lamer_qwen3_4b}
+TRAINER_LOCAL_DIR=${TRAINER_LOCAL_DIR:-${CHECKPOINT_ROOT}/${RUN_NAME}}
+RUN_LOG_PATH=${RUN_LOG_PATH:-../${RUN_NAME}.log}
 
 train_data_size=16
 val_data_size=128
@@ -15,8 +20,8 @@ python3 -m examples.data_preprocess.prepare \
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=gigpo \
-    data.train_files=$HOME/data/verl-agent/text/train.parquet \
-    data.val_files=$HOME/data/verl-agent/text/test.parquet \
+    data.train_files=$TRAIN_DATA_PATH \
+    data.val_files=$VAL_DATA_PATH \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=2048 \
@@ -73,7 +78,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='lamer' \
-    trainer.experiment_name=minesweeper_lamer_qwen3_4b \
+    trainer.experiment_name=$RUN_NAME \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
@@ -81,8 +86,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.total_epochs=300 \
     trainer.val_before_train=True \
     trainer.log_val_generations=1 \
-    trainer.default_local_dir=/gpfs/scrubbed/mateogc/checkpoints/lamer/minesweeper_lamer_qwen3_4b \
+    trainer.default_local_dir=$TRAINER_LOCAL_DIR \
     trainer.max_actor_ckpt_to_keep=1 \
     trainer.max_critic_ckpt_to_keep=1 \
-    2>&1 | tee -a ../minesweeper_lamer_qwen3_4b.log
-
+    2>&1 | tee -a $RUN_LOG_PATH

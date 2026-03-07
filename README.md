@@ -34,6 +34,45 @@ See the `examples` folder for more examples.
 ## Environment
 Please follow this [note](https://github.com/mlbio-epfl/LaMer/tree/main/assets/env.md) to install and test the agent environments.
 
+### Language Table (PyBullet tabletop manipulation)
+
+Language Table runs in a separate process (its own Python venv with `gym==0.23` +
+PyBullet) and communicates with LaMer over TCP. See the full setup instructions in
+[assets/env.md](assets/env.md#language-table-pybullet-tabletop-manipulation).
+
+**Quick start:**
+
+```bash
+# 1. Start env servers with VLA (in the language-table repo, separate terminals)
+cd /path/to/language-table && export PYTHONPATH=${PWD}:$PYTHONPATH
+ltvenv/bin/python -m language_table.lamer.server_main --port 50051 --num_envs 8 --num_attempts 3 \
+    --vla_checkpoint /path/to/checkpoints/bc_resnet_sim_checkpoint_955000
+ltvenv/bin/python -m language_table.lamer.server_main --port 50052 --num_envs 16 --num_attempts 3 \
+    --vla_checkpoint /path/to/checkpoints/bc_resnet_sim_checkpoint_955000
+
+# 2. Run LaMer training (in this repo)
+python3 -m verl.trainer.main_ppo \
+    env.env_name=language_table \
+    env.remote=True \
+    env.remote_address=localhost:50051 \
+    env.remote_val_address=localhost:50052 \
+    env.num_attempts=3 \
+    ... # other config
+```
+
+The `--vla_checkpoint` flag loads the pre-trained LAVA policy for the inner loop.
+Without it, the server falls back to random actions. The checkpoint is downloaded
+automatically on first run (see the SLURM script), or manually:
+
+```bash
+wget -O /path/to/checkpoints/bc_resnet_sim_checkpoint_955000 \
+    https://storage.googleapis.com/gresearch/robotics/language_table_checkpoints/bc_resnet_sim_checkpoint_955000
+```
+
+**Docs:**
+- [VLA integration plan and design decisions](docs/vla_integration.md)
+- [How to integrate a custom VLA](docs/custom_vla.md)
+
 
 ## Acknowledgements
 This work is built upon [verl](https://github.com/volcengine/verl), [verl-agent](https://github.com/langfengQ/verl-agent), [reflexion](https://github.com/noahshinn/reflexion), [RAGEN](https://github.com/mll-lab-nu/RAGEN). We thank the authors and contributors of these projects for sharing their valuable work.

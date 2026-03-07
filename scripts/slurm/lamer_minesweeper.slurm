@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -D /gpfs/projects/weirdlab/mateo/projects/LaMer               # TODO CHANGE: path to your LaMer repo
+#SBATCH -D .
 #SBATCH --job-name=lamer-minesweeper
 #SBATCH --qos=normal
 #SBATCH --nodes=1
@@ -8,12 +8,19 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=800G
 #SBATCH --time=24:00:00
-#SBATCH --output=/gpfs/scrubbed/mateogc/slurm_logs/%x-%j.out          # TODO CHANGE: your slurm log dir
-#SBATCH --error=/gpfs/scrubbed/mateogc/slurm_logs/%x-%j.err           # TODO CHANGE: your slurm log dir
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --error=slurm-%x-%j.err
 
 set -euo pipefail
 
-source /gpfs/home/mateogc/setup_mateo.sh                              # TODO CHANGE: path to your setup script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAMER_DIR="${LAMER_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
+SETUP_SCRIPT="${SETUP_SCRIPT:-}"
+LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
+
+if [ -n "${SETUP_SCRIPT}" ] && [ -f "${SETUP_SCRIPT}" ]; then
+    source "${SETUP_SCRIPT}"
+fi
 
 module load conda/Miniforge3-25.3.1-3
 module load gcc/13.4.0
@@ -21,10 +28,11 @@ module load cmake/3.31.8
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 set +u
-conda activate lamer                                                   # TODO CHANGE: your conda env name
+conda activate "${LAMER_CONDA_ENV}"
 set -u
 echo "Environment activated!"
 echo "START TIME: $(date)"
+echo "LAMER_DIR: ${LAMER_DIR}"
 
 ######################
 ### Environment ######
@@ -45,6 +53,7 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 ######################
 # Run the upstream example script exactly as provided.
 # It hard-codes trainer.n_gpus_per_node=4, which matches --gres=gpu:4 above.
+cd "${LAMER_DIR}"
 bash examples/minesweeper/lamer_minesweeper_qwen3_4b.sh
 
 echo "END TIME: $(date)"
