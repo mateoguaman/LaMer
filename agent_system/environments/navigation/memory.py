@@ -1,13 +1,13 @@
 from typing import List, Dict, Any
 
 
-class SimpleMemoryMaze:
+class SimpleMemoryNavigation:
     """
     Memory manager: stores and fetches per-environment trajectory history.
 
     Each stored record is one "turn" (one episodic action string + resulting
-    observation).  Because the maze uses an episodic wrapper, a single turn
-    covers the entire action sequence for one attempt.
+    observation).  Because the navigation env uses an episodic wrapper, a
+    single turn covers the entire action sequence for one attempt.
     """
 
     def __init__(self, num_processes: int = 0):

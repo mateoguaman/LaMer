@@ -1,59 +1,74 @@
-MAZE_PLAY_PROMPT = """
-You are an expert agent navigating a maze.
+NAVIGATION_PLAY_PROMPT = """
+You are an expert agent navigating a 2D grid.
 
-# Symbols
-- `A`: Your current position (agent)
-- `G`: The goal you must reach
-- `#`: Wall (impassable)
-- `.`: Open passage (passable)
+# Grid
+- The grid is {grid_size} x {grid_size}.
+- `A`: Your current position (agent), always starting at the center of the grid.
+- `G`: The goal you must reach.
+- `.`: An open cell.
 
 # Goal
-Navigate from your position (A) to the goal (G) by choosing a sequence of moves.
-The shortest possible path to the goal is exactly {n_remaining} steps.
+Navigate from your position (A) to the goal (G).
+Without any interference, the shortest path to the goal is exactly {n_remaining} steps.
 
 # Actions
 You must output a string of exactly {n_remaining} characters, each one of:
-- `U`: Move up
-- `D`: Move down
-- `L`: Move left
-- `R`: Move right
+- `U`: Move up (decrease row)
+- `D`: Move down (increase row)
+- `L`: Move left (decrease column)
+- `R`: Move right (increase column)
 
-If a move would walk into a wall or out of bounds, the agent stays in place — so plan carefully.
+# Important: Adversarial Environment
+This environment may be adversarial. The actual effect of your actions might
+not match the labels above — for example, pressing `U` might move you in a
+different direction. This remapping, if present, is deterministic: it stays
+the same for the entire environment instance. By observing the outcomes of
+your actions across multiple attempts, you can deduce the true mapping and
+adapt your strategy accordingly.
 
 # Observation
-The initial maze state is:
+The initial grid state is:
 {init_observation}{past_trajectories_reflections}{current_trajectory}
 Now it's your turn to plan your path.
-- First, reason step-by-step: locate A and G on the grid, trace the walls, and plan a valid route.
+- First, reason step-by-step: locate A and G on the grid and plan a route.
+- If you have prior attempts, reason about how your actions actually moved the
+  agent versus how you expected, to infer whether actions are remapped.
 - Then output exactly {n_remaining} characters within <action> </action> tags.
   Example for n_remaining=4: <action>LLUR</action>
 """
 
-MAZE_REFLECT_PROMPT = '''
-You are an expert agent navigating a maze.
+NAVIGATION_REFLECT_PROMPT = '''
+You are an expert agent navigating a 2D grid.
 
-# Symbols
-- `A`: Your current position (agent)
-- `G`: The goal you must reach
-- `#`: Wall (impassable)
-- `.`: Open passage (passable)
+# Grid
+- The grid is {grid_size} x {grid_size}.
+- `A`: Your current position (agent), always starting at the center.
+- `G`: The goal you must reach.
+- `.`: An open cell.
 
 # Goal
 Navigate from A to G in exactly {n_remaining} steps.
 
+# Important: Adversarial Environment
+This environment may be adversarial. The actual effect of your actions might
+not match the labels — for example, pressing `U` might move you in a different
+direction. This remapping is deterministic for the entire environment instance.
+
 # Your Task
 You will be given the history of a past failed attempt.
-Reflect on what went wrong and devise an improved action sequence.
+Reflect on what went wrong, whether the actions behaved as expected, and
+devise an improved action sequence.
 
 # Past Experience
-The initial maze state is:
+The initial grid state is:
 {init_observation}{current_trajectory}
 The task was NOT successfully completed.
 
 Now reflect on your past attempt:
 - Reason step-by-step about which moves were wrong and why.
-- Identify where you got stuck or took a wrong turn.
-- Propose a corrected plan with specific reference to the grid layout.
+- Identify whether the action effects were as expected or appeared remapped.
+- If you detected a remapping, describe it explicitly.
+- Propose a corrected plan using your updated understanding of the action mapping.
 - End with your reflection and improved plan inside <remark> </remark> tags.
 '''
 
@@ -138,8 +153,9 @@ def parse_current_trajectory(turn_idx, traj_idx, curr_traj):
             )
 
 
-def get_maze_prompt(
+def get_navigation_prompt(
     n_remaining: int,
+    grid_size: int,
     phase: str = 'play',
     turn_idx: int = 0,
     traj_idx: int = 0,
@@ -158,16 +174,18 @@ def get_maze_prompt(
             traj_idx, past_traj, reflection, reflection_type
         )
         current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj)
-        prompt = MAZE_PLAY_PROMPT.format(
+        prompt = NAVIGATION_PLAY_PROMPT.format(
             n_remaining=n_remaining,
+            grid_size=grid_size,
             init_observation=init_observation,
             past_trajectories_reflections=past_trajectories_reflections,
             current_trajectory=current_trajectory,
         )
     else:
         current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj)
-        prompt = MAZE_REFLECT_PROMPT.format(
+        prompt = NAVIGATION_REFLECT_PROMPT.format(
             n_remaining=n_remaining,
+            grid_size=grid_size,
             init_observation=init_observation,
             current_trajectory=current_trajectory,
         )

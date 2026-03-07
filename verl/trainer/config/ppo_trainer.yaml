@@ -346,5 +346,9 @@ env:
     n_mines: 3
     board_type: board
     mode: text
+  maze:
+    n: 4         # shortest-path length in cell steps (even, >= 2)
+  navigation:
+    n: 4         # Manhattan distance from center to goal (>= 1)
   alfworld:
     eval_dataset: eval_all

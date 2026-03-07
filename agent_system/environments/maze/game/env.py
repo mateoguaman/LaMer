@@ -1,243 +1,204 @@
-import copy
+from __future__ import annotations
 import random
-from typing import List, Dict, Any, Optional, Tuple
+from collections import deque
+import numpy as np
+import gym
+from gym import spaces
+from .disturbances import ActionDisturbance
+from .generator import FREE, generate_maze, grid_size_for_n
 
-from .maze_generator import generate_maze, load_fixed_maze, find_position, grid_to_string
-from .fixed_mazes import FIXED_MAZES
+UP, DOWN, LEFT, RIGHT = 0, 1, 2, 3
 
-# Direction mappings: (row_delta, col_delta)
-DIRECTION_MAP = {
-    'up': (-1, 0),
-    'down': (1, 0),
-    'left': (0, -1),
-    'right': (0, 1),
-}
+# Ordered to match the integer action encoding above.
+ACTION_NAMES = ("up", "down", "left", "right")
+_ACTION_TO_INT = {name: i for i, name in enumerate(ACTION_NAMES)}
+
+_DELTA = {UP: (-1, 0), DOWN: (1, 0), LEFT: (0, -1), RIGHT: (0, 1)}
+
+# Maze cell encoding used in the "maze" observation array.
+_CELL_WALL  = np.uint8(0)   # '#'
+_CELL_FREE  = np.uint8(1)   # '.'
+_CELL_AGENT = np.uint8(2)   # agent position
+_CELL_GOAL  = np.uint8(3)   # goal position
 
 
-class MazeEnv:
-    """
-    Maze environment with stochastic action execution.
+def _bfs_grid_distance(grid, start, goal):
+    """BFS counting individual cell steps through FREE cells."""
+    rows, cols = len(grid), len(grid[0])
+    visited = {start}
+    queue = deque([(start, 0)])
+    while queue:
+        (r, c), dist = queue.popleft()
+        if (r, c) == goal:
+            return dist
+        for dr, dc in _DELTA.values():
+            nr, nc = r + dr, c + dc
+            if (0 <= nr < rows and 0 <= nc < cols
+                    and (nr, nc) not in visited and grid[nr][nc] == FREE):
+                visited.add((nr, nc))
+                queue.append(((nr, nc), dist + 1))
+    return None
 
-    State: grid, agent position, goal position, step count.
-    Actions: multi-step plans (list of direction strings).
-    Stochastic effects: sticky, double, noise, unavailable actions.
-    """
 
-    def __init__(
-        self,
-        maze_size: int = 9,
-        max_episode_steps: int = 50,
-        plan_length: int = 5,
-        sticky_prob: float = 0.0,
-        double_prob: float = 0.0,
-        noise_prob: float = 0.0,
-        unavail_actions: Optional[List[str]] = None,
-        fixed_maze_name: Optional[str] = None,
-    ):
-        self.maze_size = maze_size
-        self.max_episode_steps = max_episode_steps
-        self.plan_length = plan_length
-        self.sticky_prob = sticky_prob
-        self.double_prob = double_prob
-        self.noise_prob = noise_prob
-        self.unavail_actions = unavail_actions or []
-        self.fixed_maze_name = fixed_maze_name
-
-        # State
-        self.grid = None
-        self.agent_pos = None
-        self.goal_pos = None
-        self.total_steps = 0
-        self.done = False
-        self.won = False
-        self.prev_action = None
-        self.seed = None
-
-    def reset(self, seed: int = 0) -> Tuple[str, Dict[str, Any]]:
-        """Reset the environment: generate or load maze, place agent at start."""
-        self.seed = seed
-        self.total_steps = 0
-        self.done = False
-        self.won = False
-        self.prev_action = None
-
-        if self.fixed_maze_name:
-            maze_data = None
-            for m in FIXED_MAZES:
-                if m['name'] == self.fixed_maze_name:
-                    maze_data = m
-                    break
-            if maze_data is None:
-                raise ValueError(f"Fixed maze '{self.fixed_maze_name}' not found")
-            self.grid = load_fixed_maze(maze_data['maze'])
-        else:
-            self.grid = generate_maze(
-                width=self.maze_size,
-                height=self.maze_size,
-                seed=seed
-            )
-
-        self.agent_pos = find_position(self.grid, 'S')
-        self.goal_pos = find_position(self.grid, 'G')
-
-        if self.agent_pos is None or self.goal_pos is None:
-            raise ValueError("Maze must have both 'S' (start) and 'G' (goal)")
-
-        # Mark start as path (agent is tracked separately)
-        self.grid[self.agent_pos[0]][self.agent_pos[1]] = '.'
-
-        obs = self.render()
-        info = {'won': False}
-        return obs, info
-
-    def step(self, actions: List[str]) -> Tuple[str, float, bool, Dict[str, Any]]:
-        """
-        Execute a multi-step plan.
-
-        Args:
-            actions: List of direction strings (e.g. ["up", "right", "down"])
-
-        Returns:
-            (observation, total_reward, done, info)
-            info contains: won, planned_actions, executed_actions, wall_hits
-        """
-        if self.done:
-            return self.render(), 0.0, True, {'won': self.won}
-
-        total_reward = 0.0
-        executed_actions = []
-        wall_hits = 0
-        rng = random.Random(self.seed * 10000 + self.total_steps)
-
-        for i, action in enumerate(actions):
-            if self.done:
-                executed_actions.append('(skipped)')
-                continue
-
-            actual_action = self._apply_stochastic_effects(action, rng)
-            executed_actions.append(actual_action)
-
-            if actual_action == '(unavailable)':
-                total_reward -= 0.5
-                wall_hits += 1
-                self.total_steps += 1
+def _render_text(grid, agent, goal, remaining):
+    """ASCII string used by render()."""
+    lines = []
+    for r, row in enumerate(grid):
+        chars = []
+        for c, cell in enumerate(row):
+            if (r, c) == agent:
+                chars.append("A")
+            elif (r, c) == goal:
+                chars.append("G")
             else:
-                moved, double_moved = self._execute_move(actual_action, rng)
-                self.total_steps += 1
+                chars.append(cell)
+        lines.append("".join(chars))
+    hdr = "Agent: ({},{})  Goal: ({},{})  Steps remaining: {}".format(
+        agent[0], agent[1], goal[0], goal[1], remaining)
+    return hdr + "\n" + "\n".join(lines)
 
-                if not moved:
-                    total_reward -= 0.5
-                    wall_hits += 1
-                else:
-                    total_reward -= 0.1
 
-                    if double_moved:
-                        executed_actions[-1] = actual_action.upper() + '(doubled)'
+def _make_obs(grid, agent, goal, remaining):
+    """Build the dict observation returned by reset() and step()."""
+    rows, cols = len(grid), len(grid[0])
+    maze_arr = np.zeros((rows, cols), dtype=np.uint8)
+    for r in range(rows):
+        for c in range(cols):
+            maze_arr[r, c] = _CELL_FREE if grid[r][c] == FREE else _CELL_WALL
+    maze_arr[agent[0], agent[1]] = _CELL_AGENT
+    maze_arr[goal[0], goal[1]] = _CELL_GOAL
+    return {
+        "agent_pos":       np.array(agent,       dtype=np.int32),
+        "goal_pos":        np.array(goal,         dtype=np.int32),
+        "steps_remaining": np.array([remaining], dtype=np.int32),
+        "maze":            maze_arr,
+    }
 
-                    if self.agent_pos == self.goal_pos:
-                        total_reward += 10.0
-                        self.done = True
-                        self.won = True
 
-            if self.total_steps >= self.max_episode_steps:
-                self.done = True
+class MazeEnv(gym.Env):
+    """
+    Passage-based maze env with exact shortest-path length n.
 
-        obs = self.render()
-        info = {
-            'won': self.won,
-            'planned_actions': actions,
-            'executed_actions': executed_actions,
-            'wall_hits': wall_hits,
-            'total_steps': self.total_steps,
-        }
-        return obs, total_reward, self.done, info
+    A "step" moves the agent one cell in the display grid.  n must be an even
+    integer >= 2 (room corners always sit at odd grid positions, so the
+    shortest path between any two corners has even length).
 
-    def _apply_stochastic_effects(self, action: str, rng: random.Random) -> str:
-        """Apply stochastic effects to an action."""
-        action = action.lower().strip()
+    Observation space: Dict
+        "agent_pos"      : Box(2,)    int32  — (row, col) in display grid
+        "goal_pos"       : Box(2,)    int32  — (row, col) in display grid
+        "steps_remaining": Box(1,)    int32  — BFS distance remaining to goal
+        "maze"           : Box(G, G)  uint8  — grid encoding
+                           0=wall  1=free  2=agent  3=goal
+                           G = grid_size_for_n(n)
 
-        # Check unavailable actions
-        if action in [a.lower() for a in self.unavail_actions]:
-            return '(unavailable)'
+    Action space: Discrete(4) — step() accepts integers OR strings.
+        0="up"  1="down"  2="left"  3="right"
+        action_space.sample() returns an integer;
+        map with ACTION_NAMES[i] to get the string name.
 
-        # Sticky: repeat previous action
-        if self.prev_action and rng.random() < self.sticky_prob:
-            action = self.prev_action
+    Reward:
+        sparse=False (default): 1 - dist/n  ∈ [0, 1], where dist is the
+            BFS distance to the goal.  Equals 0 at the start, 1 at the goal.
+        sparse=True: 0 everywhere, +1 only when the agent reaches the goal.
+    Terminates when agent reaches goal cell.
 
-        # Noise: replace with random direction
-        if rng.random() < self.noise_prob:
-            action = rng.choice(list(DIRECTION_MAP.keys()))
+    Parameters
+    ----------
+    n : int                      Shortest-path length in cell steps (even, >= 2).
+    disturbances : list          ActionDisturbance instances applied in order.
+    max_steps : int              Episode length limit (default 4*n).
+    sparse : bool                If True, use sparse {0, 1} reward (default False).
+    seed : int                   RNG seed.
+    """
 
-        self.prev_action = action
-        return action
+    metadata = dict(render_modes=["ansi"])
 
-    def _execute_move(self, action: str, rng: random.Random) -> Tuple[bool, bool]:
-        """
-        Execute a single move. Returns (moved, double_moved).
-        """
-        if action not in DIRECTION_MAP:
-            return False, False
+    def __init__(self, n, disturbances=None, max_steps=None, sparse=False, seed=None):
+        super().__init__()
+        if n < 2:
+            raise ValueError("n must be >= 2")
+        if n % 2 != 0:
+            raise ValueError(
+                f"n must be even (got {n}). Cell-step paths between corners "
+                "always have even length in a passage-based maze."
+            )
+        self.n = n
+        self.sparse = sparse
+        self.disturbances = list(disturbances) if disturbances else []
+        self.max_steps = max_steps if max_steps is not None else 4 * n
+        self._seed = seed
+        self._np_rng = np.random.default_rng(seed)
+        self._rng = random.Random(seed)
 
-        dr, dc = DIRECTION_MAP[action]
-        new_r = self.agent_pos[0] + dr
-        new_c = self.agent_pos[1] + dc
+        self.action_names = ACTION_NAMES
+        self.action_space = spaces.Discrete(4)
 
-        # Check bounds and walls
-        if not self._is_valid_position(new_r, new_c):
-            return False, False
+        G = grid_size_for_n(n)
+        self.observation_space = spaces.Dict({
+            "agent_pos":       spaces.Box(0, G - 1, shape=(2,),    dtype=np.int32),
+            "goal_pos":        spaces.Box(0, G - 1, shape=(2,),    dtype=np.int32),
+            "steps_remaining": spaces.Box(0, n,     shape=(1,),    dtype=np.int32),
+            "maze":            spaces.Box(0, 3,     shape=(G, G),  dtype=np.uint8),
+        })
 
-        self.agent_pos = (new_r, new_c)
+        self._maze = None
+        self._agent = (0, 0)
+        self._remaining = 0
+        self._step_count = 0
 
-        # Check double move
-        double_moved = False
-        if rng.random() < self.double_prob and not self.agent_pos == self.goal_pos:
-            new_r2 = new_r + dr
-            new_c2 = new_c + dc
-            if self._is_valid_position(new_r2, new_c2):
-                self.agent_pos = (new_r2, new_c2)
-                double_moved = True
-
-        return True, double_moved
-
-    def _is_valid_position(self, r: int, c: int) -> bool:
-        """Check if a position is within bounds and not a wall."""
-        if r < 0 or r >= len(self.grid) or c < 0 or c >= len(self.grid[0]):
-            return False
-        return self.grid[r][c] != '#'
-
-    def render(self) -> str:
-        """Return ASCII string of the grid with agent position marked as 'A'."""
-        lines = []
-        for r, row in enumerate(self.grid):
-            line = []
-            for c, cell in enumerate(row):
-                if (r, c) == self.agent_pos:
-                    line.append('A')
-                elif (r, c) == self.goal_pos:
-                    line.append('G')
-                else:
-                    line.append(cell)
-            lines.append(''.join(line))
-        return '\n'.join(lines)
-
-    def copy(self) -> 'MazeEnv':
-        """Create a deep copy of this environment."""
-        new_env = MazeEnv(
-            maze_size=self.maze_size,
-            max_episode_steps=self.max_episode_steps,
-            plan_length=self.plan_length,
-            sticky_prob=self.sticky_prob,
-            double_prob=self.double_prob,
-            noise_prob=self.noise_prob,
-            unavail_actions=list(self.unavail_actions),
-            fixed_maze_name=self.fixed_maze_name,
+    def reset(self, seed=None):
+        if seed is not None:
+            self._np_rng = np.random.default_rng(seed)
+            self._rng = random.Random(seed)
+        for d in self.disturbances:
+            d.reset(self._np_rng)
+        self._maze = generate_maze(self.n, self._rng)
+        self._agent = self._maze.start
+        self._remaining = self._maze.path_length
+        self._step_count = 0
+        obs = _make_obs(self._maze.grid, self._agent, self._maze.goal, self._remaining)
+        self._last_info = dict(
+            start=self._maze.start,
+            goal=self._maze.goal,
+            path_length=self._maze.path_length,
+            disturbances=[repr(d) for d in self.disturbances],
         )
-        new_env.grid = [row[:] for row in self.grid] if self.grid else None
-        new_env.agent_pos = self.agent_pos
-        new_env.goal_pos = self.goal_pos
-        new_env.total_steps = self.total_steps
-        new_env.done = self.done
-        new_env.won = self.won
-        new_env.prev_action = self.prev_action
-        new_env.seed = self.seed
-        return new_env
+        return obs
+
+    def step(self, action):
+        if self._maze is None:
+            raise RuntimeError("Call reset() first.")
+        if isinstance(action, str):
+            action = _ACTION_TO_INT[action.lower()]
+        disturbed = int(action)
+        for d in self.disturbances:
+            disturbed = d(disturbed)
+        dr, dc = _DELTA[disturbed]
+        nr, nc = self._agent[0] + dr, self._agent[1] + dc
+        grid = self._maze.grid
+        rows, cols = len(grid), len(grid[0])
+        if 0 <= nr < rows and 0 <= nc < cols and grid[nr][nc] == FREE:
+            self._agent = (nr, nc)
+        dist = _bfs_grid_distance(grid, self._agent, self._maze.goal)
+        self._remaining = dist if dist is not None else self._remaining
+        self._step_count += 1
+        terminated = (self._agent == self._maze.goal)
+        truncated = not terminated and self._step_count >= self.max_steps
+        done = terminated or truncated
+        obs = _make_obs(grid, self._agent, self._maze.goal, self._remaining)
+        info = dict(agent=self._agent, goal=self._maze.goal,
+                    disturbed_action=disturbed, step=self._step_count,
+                    terminated=terminated, truncated=truncated)
+        if self.sparse:
+            reward = 1.0 if terminated else 0.0
+        else:
+            reward = 1.0 - self._remaining / self.n
+        return obs, reward, done, info
+
+    def render(self):
+        if self._maze is None:
+            return None
+        return _render_text(self._maze.grid, self._agent, self._maze.goal, self._remaining)
+
+    def close(self):
+        pass

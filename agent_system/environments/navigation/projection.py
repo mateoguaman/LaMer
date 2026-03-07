@@ -1,17 +1,16 @@
-import re
 import copy
 from typing import List, Tuple
 
 _VALID_CHARS = frozenset("UDLR")
 
 
-def maze_projection(
+def navigation_projection(
     actions: List[str],
     n_remaining: int,
     phase: str = 'play',
 ) -> Tuple:
     """
-    Parse LLM text outputs into validated maze action strings.
+    Parse LLM text outputs into validated navigation action strings.
 
     Play phase
     ----------
@@ -51,7 +50,6 @@ def maze_projection(
                 continue
 
             extracted = raw[start_idx + len("<action>"):end_idx].strip().upper()
-            # Keep only valid direction characters, then truncate
             filtered = ''.join(c for c in extracted if c in _VALID_CHARS)
             filtered = filtered[:n_remaining]
 
@@ -62,7 +60,6 @@ def maze_projection(
                 actions[i] = ''
                 valids[i] = 0
 
-            # Extract optional <plan> block as the "thought"
             plan_start = original_str.rfind("<plan>")
             plan_end = original_str.rfind("</plan>")
             if plan_start != -1 and plan_end != -1:

@@ -1,15 +1,17 @@
 """
-maze_env — Gym maze environment with exact shortest-path length.
+navigation_env — Open 2D grid navigation environment.
 
-A "step" is moving one cell in the display grid.  n must be an even integer
->= 2 (passage-based maze corners always have even-length shortest paths).
+The agent starts at the center of a (2n+1) x (2n+1) grid and must reach
+a goal placed exactly n Manhattan-distance steps away.  The grid has no
+walls; every cell is passable.  Optional action disturbances make the
+environment adversarial.
 
 Quick start
 -----------
     import gym
-    import maze_env  # registers "Maze-v0"
+    import agent_system.environments.navigation.game  # registers "Navigation-v0"
 
-    env = gym.make("Maze-v0", n=8)  # n must be even
+    env = gym.make("Navigation-v0", n=5)
     obs = env.reset(seed=42)
     print(obs)
 
@@ -17,13 +19,13 @@ Quick start
 
 Custom disturbances
 -------------------
-    from maze_env import ActionDisturbance, MazeEnv
+    from agent_system.environments.navigation.game import ActionDisturbance, NavigationEnv
 
     class MyDisturbance(ActionDisturbance):
         def __call__(self, action: int) -> int:
             return (action + 2) % 4  # flip both axes
 
-    env = MazeEnv(n=10, disturbances=[MyDisturbance()])
+    env = NavigationEnv(n=5, disturbances=[MyDisturbance()])
 
 Action encoding
 ---------------
@@ -34,23 +36,27 @@ Action encoding
 
 import gym
 
-from .env import ACTION_NAMES, DOWN, LEFT, RIGHT, UP, MazeEnv
-from .episodic_env import EpisodicMazeEnv
+from .env import ACTION_NAMES, DOWN, LEFT, RIGHT, UP, NavigationEnv
+from .episodic_env import EpisodicNavigationEnv
 from .disturbances import (
     ActionDisturbance,
+    CyclicRotation,
+    FlipAntiDiagonal,
     FlipBoth,
+    FlipDiagonal,
     FlipLeftRight,
     FlipUpDown,
     NoDisturbance,
     Probabilistic,
     RandomPermutation,
+    RandomChoice,
     RotateActions,
 )
 
 __all__ = [
     # Environments
-    "MazeEnv",
-    "EpisodicMazeEnv",
+    "NavigationEnv",
+    "EpisodicNavigationEnv",
     # Action constants
     "ACTION_NAMES",
     "UP",
@@ -64,12 +70,16 @@ __all__ = [
     "FlipLeftRight",
     "FlipUpDown",
     "FlipBoth",
+    "FlipDiagonal",
+    "FlipAntiDiagonal",
+    "CyclicRotation",
     "RotateActions",
     "RandomPermutation",
+    "RandomChoice",
     "Probabilistic",
 ]
 
 gym.register(
-    id="Maze-v0",
-    entry_point="agent_system.environments.maze.game.env:MazeEnv",
+    id="Navigation-v0",
+    entry_point="agent_system.environments.navigation.game.env:NavigationEnv",
 )

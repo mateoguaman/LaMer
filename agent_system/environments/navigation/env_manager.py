@@ -1,17 +1,24 @@
-from typing import List, Dict, Any, Tuple
-from collections import defaultdict
+from typing import List, Dict, Any
 from functools import partial
 
 import torch
 import numpy as np
 
-from .prompt import get_maze_prompt
-from .memory import SimpleMemoryMaze as SimpleMemory
-from .envs import build_maze_envs
-from .projection import maze_projection
+from .prompt import get_navigation_prompt
+from .memory import SimpleMemoryNavigation as SimpleMemory
+from .envs import build_navigation_envs
+from .projection import navigation_projection
 from .game.disturbances import (
-    FlipLeftRight, FlipUpDown, FlipBoth,
-    RotateActions, RandomPermutation, RandomChoice, NoDisturbance,
+    CyclicRotation,
+    FlipAntiDiagonal,
+    FlipBoth,
+    FlipDiagonal,
+    FlipLeftRight,
+    FlipUpDown,
+    NoDisturbance,
+    RandomChoice,
+    RandomPermutation,
+    RotateActions,
 )
 from ..base import EnvironmentManagerBase
 
@@ -19,6 +26,9 @@ _DISTURBANCE_MAP = {
     'FlipLeftRight':     FlipLeftRight,
     'FlipUpDown':        FlipUpDown,
     'FlipBoth':          FlipBoth,
+    'FlipDiagonal':      FlipDiagonal,
+    'FlipAntiDiagonal':  FlipAntiDiagonal,
+    'CyclicRotation':    CyclicRotation,
     'RotateActions':     RotateActions,
     'RandomPermutation': RandomPermutation,
     'NoDisturbance':     NoDisturbance,
@@ -36,24 +46,25 @@ def to_numpy(data):
         raise ValueError(f"Unsupported type: {type(data)}")
 
 
-class MazeEnvironmentManager(EnvironmentManagerBase):
+class NavigationEnvironmentManager(EnvironmentManagerBase):
     """
-    Orchestrates the Maze environment for the LaMer/GiGPO training loop.
+    Orchestrates the Navigation environment for the LaMer/GiGPO training loop.
 
     Architecture
     ------------
-    - ``envs``         : ``MazeMultiProcessEnv`` — Ray-based parallel workers.
-    - ``projection_f`` : ``maze_projection`` — parses LLM text → action string.
-    - ``memories``     : one ``SimpleMemoryMaze`` per attempt (for MetaRL).
+    - ``envs``         : ``NavigationMultiProcessEnv`` — Ray-based parallel workers.
+    - ``projection_f`` : ``navigation_projection`` — parses LLM text -> action string.
+    - ``memories``     : one ``SimpleMemoryNavigation`` per attempt (for MetaRL).
     - ``reflections``  : stores per-env reflection strings across attempts.
 
-    The maze is *episodic*: each ``step`` call accepts one action string of
-    length ``n`` (the maze path length) and executes all moves at once.
-    MetaRL allows multiple attempts on the same maze instance via ``restart``.
+    The navigation env is *episodic*: each ``step`` call accepts one action
+    string of length ``n`` (the path length) and executes all moves at once.
+    MetaRL allows multiple attempts on the same grid instance via ``restart``.
     """
 
     def __init__(self, envs, projection_f, num_attempts, do_reflection, config):
-        self.n = config.env.maze.n                      # path length = num moves per turn
+        self.n = config.env.navigation.n
+        self.grid_size = 2 * self.n + 1
         self.num_attempts = num_attempts
         self.num_processes = envs.num_processes
 
@@ -68,7 +79,7 @@ class MazeEnvironmentManager(EnvironmentManagerBase):
 
         self.curr_turn_idx = 0
         self.curr_traj_idx = 0
-        self.max_turns = config.env.get('max_turns', 1)  # typically 1 for episodic maze
+        self.max_turns = config.env.get('max_turns', 1)
         super().__init__(envs, projection_f, config)
 
     # ---------------------------------------------------------------------- #
@@ -94,7 +105,7 @@ class MazeEnvironmentManager(EnvironmentManagerBase):
         return observations, infos
 
     def restart(self):
-        """Used for the 2nd / Nth MetaRL attempt on the same maze instance."""
+        """Used for the 2nd / Nth MetaRL attempt on the same grid instance."""
         obs, infos = self.envs.restart()
         self.curr_traj_idx += 1 if self.do_reflection else 0
         self.curr_turn_idx = 0
@@ -149,7 +160,6 @@ class MazeEnvironmentManager(EnvironmentManagerBase):
         for i, info in enumerate(infos):
             info['is_action_valid'] = to_numpy(valids[i])
 
-        # Format actions for memory storage (show invalid as 'no operation')
         stored_actions = [
             a if valids[i] else 'no operation'
             for i, a in enumerate(actions)
@@ -196,8 +206,9 @@ class MazeEnvironmentManager(EnvironmentManagerBase):
 
         postprocess_text_obs = []
         for i in range(self.num_processes):
-            obs = get_maze_prompt(
+            obs = get_navigation_prompt(
                 n_remaining=self.n,
+                grid_size=self.grid_size,
                 phase=phase,
                 turn_idx=self.curr_turn_idx,
                 traj_idx=self.curr_traj_idx,
@@ -217,23 +228,20 @@ class MazeEnvironmentManager(EnvironmentManagerBase):
 # --------------------------------------------------------------------------- #
 
 def make_envs(config):
-    """Build train and validation ``MazeEnvironmentManager`` instances."""
+    """Build train and validation ``NavigationEnvironmentManager`` instances."""
     if not isinstance(config.env.rollout.n, int):
         raise ValueError("config.env.rollout.n must be an integer")
     group_n = config.env.rollout.n if config.env.rollout.n > 0 else 1
 
-    if "maze" not in config.env.env_name.lower():
+    if "navigation" not in config.env.env_name.lower():
         print("Environment not supported")
         exit(1)
 
-    # Resolve disturbance name lists.
-    # Priority: train_disturbances > disturbances (legacy fallback)
-    #           val_disturbances   > disturbances (legacy fallback)
-    legacy_names        = list(config.env.maze.get('disturbances', []))
-    train_disturbance_names = list(config.env.maze.get('train_disturbances', legacy_names))
-    val_disturbance_names   = list(config.env.maze.get('val_disturbances',   legacy_names))
+    legacy_names            = list(config.env.navigation.get('disturbances', []))
+    train_disturbance_names = list(config.env.navigation.get('train_disturbances', legacy_names))
+    val_disturbance_names   = list(config.env.navigation.get('val_disturbances',   legacy_names))
 
-    def _build_disturbance(names: list) -> 'ActionDisturbance':
+    def _build_disturbance(names: list):
         for name in names:
             if name not in _DISTURBANCE_MAP:
                 raise ValueError(
@@ -247,22 +255,22 @@ def make_envs(config):
         return RandomChoice([_DISTURBANCE_MAP[n]() for n in names])
 
     train_env_kwargs = {
-        "n": config.env.maze.n,
+        "n": config.env.navigation.n,
         "disturbances": [_build_disturbance(train_disturbance_names)],
     }
     val_env_kwargs = {
-        "n": config.env.maze.n,
+        "n": config.env.navigation.n,
         "disturbances": [_build_disturbance(val_disturbance_names)],
     }
 
-    _envs = build_maze_envs(
+    _envs = build_navigation_envs(
         seed=config.env.seed,
         env_num=config.data.train_batch_size,
         group_n=group_n,
         is_train=True,
         env_kwargs=train_env_kwargs,
     )
-    _val_envs = build_maze_envs(
+    _val_envs = build_navigation_envs(
         seed=config.env.seed + 1000,
         env_num=config.data.val_batch_size,
         group_n=1,
@@ -275,12 +283,12 @@ def make_envs(config):
     val_num_attempts = config.env.get('val_num_attempts', num_attempts)
     val_do_reflection = config.env.get('val_do_reflection', do_reflection)
 
-    projection_f = partial(maze_projection, n_remaining=config.env.maze.n)
+    projection_f = partial(navigation_projection, n_remaining=config.env.navigation.n)
 
-    envs = MazeEnvironmentManager(
+    envs = NavigationEnvironmentManager(
         _envs, projection_f, num_attempts, do_reflection, config
     )
-    val_envs = MazeEnvironmentManager(
+    val_envs = NavigationEnvironmentManager(
         _val_envs, projection_f, val_num_attempts, val_do_reflection, config
     )
     return envs, val_envs

@@ -3,13 +3,13 @@ import gym
 import numpy as np
 from typing import Dict, Any, List, Tuple
 
-from .game.episodic_env import EpisodicMazeEnv
+from .game.episodic_env import EpisodicNavigationEnv
 
 
 @ray.remote(num_cpus=0.1)
-class MazeWorker:
+class NavigationWorker:
     """
-    Ray remote actor that owns one ``EpisodicMazeEnv`` instance.
+    Ray remote actor that owns one ``EpisodicNavigationEnv`` instance.
 
     Each worker runs in its own process so that many environments can be
     stepped in parallel without the GIL.
@@ -17,7 +17,7 @@ class MazeWorker:
 
     def __init__(self, env_kwargs: Dict[str, Any] = None):
         env_kwargs = env_kwargs or {}
-        self.env = EpisodicMazeEnv(**env_kwargs)
+        self.env = EpisodicNavigationEnv(**env_kwargs)
         self._env_copy = None
 
     def step(self, action: str) -> Tuple:
@@ -39,9 +39,9 @@ class MazeWorker:
         return obs, info
 
 
-class MazeMultiProcessEnv(gym.Env):
+class NavigationMultiProcessEnv(gym.Env):
     """
-    Ray-based vectorised wrapper for ``EpisodicMazeEnv``.
+    Ray-based vectorised wrapper for ``EpisodicNavigationEnv``.
 
     Launches ``env_num * group_n`` Ray workers.  Identical seeds are shared
     within each group of ``group_n`` workers (for GRPO / GiGPO).
@@ -55,9 +55,9 @@ class MazeMultiProcessEnv(gym.Env):
     group_n : int
         Number of copies of each environment (same seed, different rollouts).
     is_train : bool
-        Training envs draw seeds from [0, 2¹⁶); validation from [2¹⁶, 2³²).
+        Training envs draw seeds from [0, 2^16); validation from [2^16, 2^32).
     env_kwargs : dict
-        Forwarded verbatim to ``EpisodicMazeEnv.__init__``.
+        Forwarded verbatim to ``EpisodicNavigationEnv.__init__``.
     """
 
     def __init__(
@@ -81,7 +81,7 @@ class MazeMultiProcessEnv(gym.Env):
 
         env_kwargs = env_kwargs or {}
         self.workers: List = [
-            MazeWorker.remote(env_kwargs) for _ in range(self.num_processes)
+            NavigationWorker.remote(env_kwargs) for _ in range(self.num_processes)
         ]
 
     # ---------------------------------------------------------------------- #
@@ -145,14 +145,14 @@ class MazeMultiProcessEnv(gym.Env):
         self.close()
 
 
-def build_maze_envs(
+def build_navigation_envs(
     seed: int = 0,
     env_num: int = 1,
     group_n: int = 1,
     is_train: bool = True,
     env_kwargs: Dict[str, Any] = None,
-) -> MazeMultiProcessEnv:
-    return MazeMultiProcessEnv(
+) -> NavigationMultiProcessEnv:
+    return NavigationMultiProcessEnv(
         seed=seed,
         env_num=env_num,
         group_n=group_n,
