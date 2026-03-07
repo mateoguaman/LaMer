@@ -4,7 +4,7 @@
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:5
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=800G
 #SBATCH --time=24:00:00
@@ -69,6 +69,11 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 # Language-table needs its repo on PYTHONPATH
 export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
 
+# GPU isolation: env servers (JAX/LAVA) on GPU 0, LaMer training on GPUs 1-4.
+# Without this, JAX preallocates most of GPU memory before training starts → OOM.
+ENV_SERVER_GPU=0
+TRAIN_GPUS="1,2,3,4"
+
 ########################################
 ### Step 0: Download VLA checkpoint ####
 ########################################
@@ -96,7 +101,11 @@ else
 fi
 
 # Training server (background)
-echo "Starting training server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS} envs)..."
+# Pin to ENV_SERVER_GPU; disable JAX preallocation so it only uses what LAVA needs (~2-3 GB)
+echo "Starting training server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
+CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
+XLA_PYTHON_CLIENT_PREALLOCATE=false \
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${TRAIN_PORT} \
     --num_envs ${TRAIN_NUM_ENVS} --group_n ${GROUP_SIZE} \
@@ -109,7 +118,10 @@ TRAIN_SERVER_PID=$!
 echo "Training server PID: ${TRAIN_SERVER_PID} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=$((TRAIN_NUM_ENVS * GROUP_SIZE)) workers)"
 
 # Validation server (background, group_n=1 — no grouping for eval)
-echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs)..."
+echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
+CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
+XLA_PYTHON_CLIENT_PREALLOCATE=false \
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${VAL_PORT} \
     --num_envs ${VAL_NUM_ENVS} --group_n 1 \
@@ -168,7 +180,8 @@ echo "Connection test passed!"
 ### Step 4: LaMer training #############
 ########################################
 echo ""
-echo "=== Starting LaMer training ==="
+echo "=== Starting LaMer training (GPUs: ${TRAIN_GPUS}) ==="
+export CUDA_VISIBLE_DEVICES=${TRAIN_GPUS}
 cd ${LAMER_DIR}
 
 train_data_size=${TRAIN_NUM_ENVS}
