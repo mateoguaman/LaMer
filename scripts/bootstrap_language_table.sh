@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE_LAMER_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [ -f "${BASE_LAMER_DIR}/.env.language_table" ]; then
+    # shellcheck disable=SC1091
+    source "${BASE_LAMER_DIR}/.env.language_table"
+fi
+if [ -f "${BASE_LAMER_DIR}/.env.language_table.secrets" ]; then
+    # shellcheck disable=SC1091
+    source "${BASE_LAMER_DIR}/.env.language_table.secrets"
+fi
+LAMER_DIR="${LAMER_DIR:-${BASE_LAMER_DIR}}"
+DEFAULT_LANGTABLE_DIR="${LAMER_DIR}/../language-table"
+LANGTABLE_DIR="${LANGTABLE_DIR:-${DEFAULT_LANGTABLE_DIR}}"
+LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
+LANGTABLE_ENV_PREFIX="${LANGTABLE_ENV_PREFIX:-${LANGTABLE_DIR}/ltvenv}"
+SETUP_SCRIPT="${SETUP_SCRIPT:-}"
+if [ -n "${SETUP_SCRIPT}" ] && [ -f "${SETUP_SCRIPT}" ]; then
+    # shellcheck disable=SC1090
+    source "${SETUP_SCRIPT}"
+fi
+
+if [ ! -d "${LAMER_DIR}" ]; then
+    echo "ERROR: LAMER_DIR does not exist: ${LAMER_DIR}"
+    exit 1
+fi
+if [ ! -d "${LANGTABLE_DIR}" ]; then
+    echo "ERROR: LANGTABLE_DIR does not exist: ${LANGTABLE_DIR}"
+    echo "Set LANGTABLE_DIR in .env.language_table or export it before running."
+    exit 1
+fi
+if [ ! -f "${LAMER_DIR}/requirements.txt" ]; then
+    echo "ERROR: Missing ${LAMER_DIR}/requirements.txt"
+    exit 1
+fi
+if [ ! -f "${LANGTABLE_DIR}/requirements.txt" ]; then
+    echo "ERROR: Missing ${LANGTABLE_DIR}/requirements.txt"
+    exit 1
+fi
+
+ensure_conda() {
+    if command -v conda >/dev/null 2>&1; then
+        return 0
+    fi
+    if type module >/dev/null 2>&1; then
+        module load conda/Miniforge3-25.3.1-3 || true
+    fi
+    command -v conda >/dev/null 2>&1
+}
+
+if ! ensure_conda; then
+    echo "ERROR: conda is not available. Load your cluster conda module first."
+    exit 1
+fi
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+
+echo "LAMER_DIR=${LAMER_DIR}"
+echo "LANGTABLE_DIR=${LANGTABLE_DIR}"
+echo "LAMER_CONDA_ENV=${LAMER_CONDA_ENV}"
+echo "LANGTABLE_ENV_PREFIX=${LANGTABLE_ENV_PREFIX}"
+
+echo "=== Bootstrapping LaMer env (${LAMER_CONDA_ENV}) ==="
+if ! conda env list | awk '{print $1}' | grep -qx "${LAMER_CONDA_ENV}"; then
+    conda create -y -n "${LAMER_CONDA_ENV}" python=3.12
+fi
+conda activate "${LAMER_CONDA_ENV}"
+python -m pip install --upgrade pip
+python -m pip install -r "${LAMER_DIR}/requirements.txt"
+
+echo "=== Bootstrapping language-table env (${LANGTABLE_ENV_PREFIX}) ==="
+if [ -e "${LANGTABLE_ENV_PREFIX}" ] && [ ! -d "${LANGTABLE_ENV_PREFIX}/conda-meta" ]; then
+    echo "ERROR: ${LANGTABLE_ENV_PREFIX} exists but is not a conda env."
+    echo "Remove it or set LANGTABLE_ENV_PREFIX to a different path."
+    exit 1
+fi
+if [ ! -d "${LANGTABLE_ENV_PREFIX}/conda-meta" ]; then
+    conda create -y -p "${LANGTABLE_ENV_PREFIX}" python=3.10
+fi
+conda activate "${LANGTABLE_ENV_PREFIX}"
+python -m pip install --upgrade pip
+python -m pip install -r "${LANGTABLE_DIR}/requirements.txt"
+python -m pip install --no-deps \
+    git+https://github.com/google-research/scenic.git@ae21d9e884015aa7bc7cf1d489af53d16c249726
+
+cat <<EOF
+
+Bootstrap complete.
+
+LaMer env:
+  ${LAMER_CONDA_ENV}
+
+language-table env:
+  ${LANGTABLE_ENV_PREFIX}
+
+LANGTABLE_PYTHON should be:
+  ${LANGTABLE_ENV_PREFIX}/bin/python
+
+Next steps:
+  1. cp .env.language_table.example .env.language_table
+  2. cp .env.language_table.secrets.example .env.language_table.secrets
+  3. Edit both files as needed
+  4. scripts/submit_language_table.sh
+EOF

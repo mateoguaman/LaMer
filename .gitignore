@@ -2,4 +2,9 @@
 *.pyc
 wandb/
 outputs/
-slurm
+slurm-*.out
+slurm-*.err
+lamer-*.out
+lamer-*.err
+.env.language_table
+.env.language_table.secrets

@@ -69,6 +69,65 @@ wget -O /path/to/checkpoints/bc_resnet_sim_checkpoint_955000 \
     https://storage.googleapis.com/gresearch/robotics/language_table_checkpoints/bc_resnet_sim_checkpoint_955000
 ```
 
+To submit the single-node SLURM job with env-var based configuration instead of
+editing paths in the script:
+
+```bash
+scripts/submit_language_table.sh
+```
+
+### SLURM setup
+
+For repeatable SLURM runs, create a local env file once and keep your
+cluster-specific paths there:
+
+```bash
+cp .env.language_table.example .env.language_table
+cp .env.language_table.secrets.example .env.language_table.secrets
+```
+
+Then edit `.env.language_table` and set the values for your cluster, especially:
+
+- `LANGTABLE_DIR`
+- `LANGTABLE_PYTHON`
+- `LAMER_CONDA_ENV`
+- `TRAIN_DATA_PATH`
+- `VAL_DATA_PATH`
+- `CHECKPOINT_ROOT`
+- `VLA_CHECKPOINT_DIR`
+- `SETUP_SCRIPT` if your cluster needs custom shell initialization
+
+Then edit `.env.language_table.secrets` for secrets such as:
+
+- `WANDB_API_KEY` or `WANDB_API_KEY_FILE`
+- `HF_TOKEN` if you do not want to load it via `HF_TOKEN_FILE`
+
+Bootstrap both environments with conda:
+
+```bash
+scripts/bootstrap_language_table.sh
+```
+
+Once that file is configured, submit the Language Table job with:
+
+```bash
+scripts/submit_language_table.sh
+```
+
+You can still override any variable for a single run:
+
+```bash
+RUN_NAME=lt_smoketest TRAIN_DATA_PATH=/path/to/train.parquet \
+VAL_DATA_PATH=/path/to/test.parquet \
+scripts/submit_language_table.sh
+```
+
+The wrapper exports the environment variables and then calls:
+
+```bash
+sbatch scripts/slurm/lamer_language_table.slurm
+```
+
 **Docs:**
 - [VLA integration plan and design decisions](docs/vla_integration.md)
 - [How to integrate a custom VLA](docs/custom_vla.md)
@@ -89,4 +148,3 @@ If you find our code useful, please consider citing:
     year={2026}
 }
 ```
-

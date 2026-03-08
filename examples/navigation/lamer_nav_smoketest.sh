@@ -1,5 +1,7 @@
 set -x
 ENGINE=${1:-vllm}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # ---- Smoketest: minimal sizes to exercise the full pipeline in ~1 epoch ----
 # Reduce everything that doesn't change code paths:
@@ -15,7 +17,7 @@ val_data_size=16
 group_size=1
 nav_n=4   # 4-step path, 9×9 open grid — small enough for fast resets
 
-save_dir=/gpfs/scrubbed/memmelma/projects/LaMer
+save_dir=${SAVE_DIR:-$REPO_ROOT}
 
 python3 -m examples.data_preprocess.prepare \
     --mode 'text' \

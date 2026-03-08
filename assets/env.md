@@ -78,28 +78,57 @@ Please also refer to the original [Webshop](https://github.com/princeton-nlp/Web
 Language Table uses `gym==0.23` and PyBullet, which are incompatible with the
 LaMer venv. It runs in a **separate process** via the remote env server protocol.
 
-**Step 1: Set up the language-table environment (separate venv)**
+**Step 1: Create local config files**
+
+From the LaMer repo:
+
+```bash
+cp .env.language_table.example .env.language_table
+cp .env.language_table.secrets.example .env.language_table.secrets
+```
+
+Edit `.env.language_table` for non-secret cluster-specific settings such as:
+
+- `LANGTABLE_DIR`
+- `LANGTABLE_PYTHON`
+- `LAMER_CONDA_ENV`
+- `TRAIN_DATA_PATH`
+- `VAL_DATA_PATH`
+- `CHECKPOINT_ROOT`
+- `VLA_CHECKPOINT_DIR`
+- `SETUP_SCRIPT`
+
+Edit `.env.language_table.secrets` for secrets such as:
+
+- `WANDB_API_KEY` or `WANDB_API_KEY_FILE`
+- `HF_TOKEN` if you do not want to use `HF_TOKEN_FILE`
+
+**Step 2: Bootstrap both environments with conda**
+
+This creates or updates:
+
+- the named LaMer conda env (`LAMER_CONDA_ENV`, default `lamer`)
+- the Language Table env at `language-table/ltvenv`
+
+```bash
+scripts/bootstrap_language_table.sh
+```
+
+`SETUP_SCRIPT` is optional. If you already use a shell script like
+`setup_mateo.sh` to export `HF_HOME`, token locations, WandB config, or cache
+directories, keep using it by pointing `SETUP_SCRIPT` at that file.
+
+**Step 3: Verify the language-table environment works standalone**
 
 ```bash
 cd /path/to/language-table
-uv venv --python 3.10 ./ltvenv
-source ./ltvenv/bin/activate
-uv pip install -r ./requirements.txt
-uv pip install --no-deps git+https://github.com/google-research/scenic.git@ae21d9e884015aa7bc7cf1d489af53d16c249726
-pip install "ray[default]"
 export PYTHONPATH=${PWD}:$PYTHONPATH
-```
-
-**Step 2: Verify the environment works standalone**
-
-```bash
 ltvenv/bin/python -m language_table.lamer.test_standalone --num_envs 4 --num_steps 50
 ```
 
-This runs 4 tests (single env, state-to-text, env manager, parallel rendering)
-and saves renders to `/tmp/lt_renders/`.
+This runs the standalone tests and saves renders to `${LT_RENDER_DIR:-/tmp/lt_renders}`.
 
-**Step 3: Start the remote env servers**
+**Step 4: Start the remote env servers**
 
 Open two terminals (or use tmux/screen) in the language-table repo:
 
@@ -121,7 +150,7 @@ ltvenv/bin/python -m language_table.lamer.server_main \
     --max_inner_steps 100 --num_attempts 3
 ```
 
-**Step 4: Run LaMer training** (in a third terminal, in the LaMer repo)
+**Step 5: Run LaMer training** (in a third terminal, in the LaMer repo)
 
 ```bash
 cd /path/to/LaMer
@@ -157,7 +186,7 @@ venv.
 | `--seed`            | 0         | Random seed                                           |
 
 
-**Step 5: Verify server connectivity (optional but recommended)**
+**Step 6: Verify server connectivity (optional but recommended)**
 
 Before running full training, verify the servers respond correctly:
 
@@ -201,18 +230,21 @@ step → restart → reflect) without needing any GPU resources.
 
 **SLURM**
 
-A ready-to-use SLURM script is provided at `scripts/slurm/lamer_language_table.slurm`.
-It runs everything on a single node:
+A ready-to-use SLURM wrapper is provided at `scripts/submit_language_table.sh`.
+It reads `.env.language_table` and `.env.language_table.secrets`, exports the
+variables, and then submits `scripts/slurm/lamer_language_table.slurm`.
+
+The SLURM job runs everything on a single node:
 
 1. Starts train + val env servers as background processes
 2. Waits for both ports to become ready (`nc -z` polling)
 3. Runs the connection test to verify protocol correctness
 4. Launches `verl.trainer.main_ppo` for training
 
-Edit the paths marked with `TODO CHANGE` at the top of the script, then submit:
+Submit with:
 
 ```bash
-sbatch scripts/slurm/lamer_language_table.slurm
+scripts/submit_language_table.sh
 ```
 
 SLURM networking notes:

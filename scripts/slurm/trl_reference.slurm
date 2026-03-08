@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -D /gpfs/home/zchuning/mateo/projects/vlm-navigation
+#SBATCH -D .
 #SBATCH --job-name=vlm-navigation
 #SBATCH --qos=normal
 #SBATCH --nodes=1
@@ -8,14 +8,20 @@
 #SBATCH --cpus-per-task=50
 #SBATCH --mem=1128G
 #SBATCH --time=12:00:00
-#SBATCH --output=/gpfs/home/zchuning/mateo/slurm_logs/%x-%j.out
-#SBATCH --error=/gpfs/home/zchuning/mateo/slurm_logs/%x-%j.err
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --error=slurm-%x-%j.err
 
 # safer bash options
 set -euo pipefail
 
-# source ~/.bashrc
-source /gpfs/home/zchuning/mateo/setup_mateo.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${PROJECT_DIR:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
+SETUP_SCRIPT="${SETUP_SCRIPT:-}"
+CONDA_ENV_NAME="${CONDA_ENV_NAME:-vlmn}"
+
+if [ -n "${SETUP_SCRIPT}" ] && [ -f "${SETUP_SCRIPT}" ]; then
+    source "${SETUP_SCRIPT}"
+fi
 
 module load conda/Miniforge3-25.3.1-3
 module load gcc/13.4.0
@@ -24,10 +30,11 @@ module load ffmpeg/7.1
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 set +u
-conda activate vlmn
+conda activate "${CONDA_ENV_NAME}"
 set -u
 echo "Environment activated!"
 echo "START TIME: $(date)"
+cd "${PROJECT_DIR}"
 
 MODEL=vlm-navigation
 TASK=sft
@@ -112,4 +119,3 @@ LAUNCHER="accelerate launch \
 srun --wait=60 --kill-on-bad-exit=1 bash -lc "$LAUNCHER $CMD"
 
 echo "END TIME: $(date)"
-

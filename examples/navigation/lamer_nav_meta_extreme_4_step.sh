@@ -1,5 +1,7 @@
 set -x
 ENGINE=${1:-vllm}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 train_data_size=16
 val_data_size=128
@@ -14,7 +16,7 @@ reflection_type="reflection_only" # "reflection_only" or "history_and_reflection
 nav_n=4
 
 experiment_name=nav_lamer_meta_extreme_4_step
-save_dir=/gpfs/scrubbed/memmelma/projects/LaMer
+save_dir=${SAVE_DIR:-$REPO_ROOT}
 
 python3 -m examples.data_preprocess.prepare \
     --mode 'text' \

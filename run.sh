@@ -7,13 +7,23 @@
 #SBATCH --time=10:00:00
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --chdir=/gpfs/projects/weirdlab/memmelma/projects/LaMer
-#SBATCH --output=slurm/%x-%A-%a-out.txt
-#SBATCH --error=slurm/%x-%A-%a-err.txt
+#SBATCH --chdir=.
+#SBATCH --output=slurm-%x-%A-%a.out
+#SBATCH --error=slurm-%x-%A-%a.err
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAMER_DIR="${LAMER_DIR:-${SCRIPT_DIR}}"
+LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
 
 module purge
 module load conda
-conda activate lamer
+source "$(conda info --base)/etc/profile.d/conda.sh"
+set +u
+conda activate "${LAMER_CONDA_ENV}"
+set -u
+cd "${LAMER_DIR}"
 
 SCRIPTS=(
     # examples/navigation/lamer_nav_base_4_step.sh

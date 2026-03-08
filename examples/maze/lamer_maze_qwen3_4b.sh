@@ -1,5 +1,7 @@
 set -x
 ENGINE=${1:-vllm}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 train_data_size=16
 val_data_size=128
@@ -14,8 +16,8 @@ python3 -m examples.data_preprocess.prepare \
 
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=gigpo \
-    data.train_files=$HOME/data/verl-agent/text/train.parquet \
-    data.val_files=$HOME/data/verl-agent/text/test.parquet \
+    data.train_files=${TRAIN_DATA_PATH:-$HOME/data/verl-agent/text/train.parquet} \
+    data.val_files=${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet} \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
     data.max_prompt_length=2048 \

@@ -7,7 +7,7 @@ trainer:
   n_gpus_per_node: 4
 
 data:
-  path: /home/runai-home/data/verl-agent/text/test.parquet
+  path: ${oc.env:VERL_VAL_DATA_PATH,${oc.env:VERL_DATA_ROOT,${oc.env:HOME}/data/verl-agent/text}/test.parquet}
   prompt_key: prompt
   n_samples: 5
   output_path: outputs
@@ -111,8 +111,8 @@ env:
   env_name: language_table
   seed: 0
   remote: True
-  remote_address: "localhost:50051"
-  remote_val_address: "localhost:50052"
+  remote_address: "${oc.env:LAMER_REMOTE_ADDRESS,localhost:50051}"
+  remote_val_address: "${oc.env:LAMER_REMOTE_VAL_ADDRESS,localhost:50052}"
   num_attempts: 3
   max_turns: 1
   rollout:
