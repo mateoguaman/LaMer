@@ -20,8 +20,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_LAMER_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LAMER_DIR="${LAMER_DIR:-${DEFAULT_LAMER_DIR}}"
 LANGTABLE_DIR="${LANGTABLE_DIR:-$(cd "${LAMER_DIR}/../language-table" && pwd)}"
-LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-${LANGTABLE_DIR}/ltvenv}"
-LANGTABLE_PYTHON="${LANGTABLE_CONDA_ENV}/bin/python"
+LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-ltvenv}"
 LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
 TRAIN_DATA_PATH="$HOME/data/verl-agent/text/train.parquet"
 VAL_DATA_PATH="$HOME/data/verl-agent/text/test.parquet"
@@ -63,6 +62,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 set +u
 conda activate "${LAMER_CONDA_ENV}"
 set -u
+LANGTABLE_PYTHON="$(conda run -n "${LANGTABLE_CONDA_ENV}" which python)"
 echo "Environment activated!"
 echo "START TIME: $(date)"
 echo "HOSTNAME: $(hostname)"
@@ -71,6 +71,9 @@ echo "LAMER_DIR: ${LAMER_DIR}"
 echo "LANGTABLE_DIR: ${LANGTABLE_DIR}"
 echo "LANGTABLE_CONDA_ENV: ${LANGTABLE_CONDA_ENV}"
 echo "TRAINER_LOCAL_DIR: ${TRAINER_LOCAL_DIR}"
+echo "CONDA_PKGS_DIRS: ${CONDA_PKGS_DIRS:-<default>}"
+echo "PIP_CACHE_DIR: ${PIP_CACHE_DIR:-<default>}"
+echo "TMPDIR: ${TMPDIR:-<default>}"
 
 ######################
 ### Environment ######
@@ -84,6 +87,10 @@ export HF_HUB_ETAG_TIMEOUT=60
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")"
+[ -n "${CONDA_PKGS_DIRS:-}" ] && mkdir -p "${CONDA_PKGS_DIRS}"
+[ -n "${PIP_CACHE_DIR:-}" ] && mkdir -p "${PIP_CACHE_DIR}"
+[ -n "${TMPDIR:-}" ] && mkdir -p "${TMPDIR}"
+[ -n "${XDG_CACHE_HOME:-}" ] && mkdir -p "${XDG_CACHE_HOME}"
 
 # Language-table needs its repo on PYTHONPATH
 export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
