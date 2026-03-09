@@ -26,10 +26,8 @@ export RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
 export VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
 export VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
 export HF_HOME="${HF_HOME:-}"
-export HF_TOKEN_FILE="${HF_TOKEN_FILE:-}"
 export WANDB_USERNAME="${WANDB_USERNAME:-}"
 export WANDB_API_KEY="${WANDB_API_KEY:-}"
-export WANDB_API_KEY_FILE="${WANDB_API_KEY_FILE:-}"
 export HF_TOKEN="${HF_TOKEN:-}"
 
 if [ -z "${CHECKPOINT_ROOT}" ]; then
@@ -45,15 +43,9 @@ if [ -n "${HF_HOME}" ]; then
     export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-${HF_HOME}/hub}"
     export HUGGINGFACE_DATASETS_CACHE="${HUGGINGFACE_DATASETS_CACHE:-${HF_HOME}/datasets}"
 fi
-if [ -n "${HF_TOKEN_FILE}" ] && [ -z "${HF_TOKEN}" ] && [ -f "${HF_TOKEN_FILE}" ]; then
-    HF_TOKEN="$(<"${HF_TOKEN_FILE}")"
-fi
 if [ -n "${HF_TOKEN}" ]; then
     export HF_TOKEN
     export HUGGINGFACE_HUB_TOKEN="${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN}}"
-fi
-if [ -n "${WANDB_API_KEY_FILE}" ] && [ -z "${WANDB_API_KEY}" ] && [ -f "${WANDB_API_KEY_FILE}" ]; then
-    WANDB_API_KEY="$(<"${WANDB_API_KEY_FILE}")"
 fi
 if [ -n "${WANDB_API_KEY}" ]; then
     export WANDB_API_KEY

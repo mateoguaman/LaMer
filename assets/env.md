@@ -98,9 +98,8 @@ Edit `.env.language_table` for non-secret cluster-specific settings such as:
 
 Edit `.env.language_table.secrets` for secrets such as:
 
-- `HF_TOKEN_FILE`
 - `WANDB_USERNAME`
-- `WANDB_API_KEY` or `WANDB_API_KEY_FILE`
+- `WANDB_API_KEY`
 - `HF_TOKEN`
 
 **Step 2: Bootstrap both environments with conda**
