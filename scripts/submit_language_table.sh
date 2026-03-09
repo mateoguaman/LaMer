@@ -31,6 +31,7 @@ export CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-}"
 export RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
 export VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
 export VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
+export SLURM_LOG_DIR="${SLURM_LOG_DIR:-}"
 export HF_HOME="${HF_HOME:-}"
 export WANDB_USERNAME="${WANDB_USERNAME:-}"
 export WANDB_API_KEY="${WANDB_API_KEY:-}"
@@ -57,6 +58,13 @@ if [ -n "${WANDB_API_KEY}" ]; then
     export WANDB_API_KEY
 fi
 
+SBATCH_LOG_ARGS=()
+if [ -n "${SLURM_LOG_DIR}" ]; then
+    mkdir -p "${SLURM_LOG_DIR}"
+    SBATCH_LOG_ARGS+=(--output "${SLURM_LOG_DIR}/%x-%j.out")
+    SBATCH_LOG_ARGS+=(--error "${SLURM_LOG_DIR}/%x-%j.err")
+fi
+
 echo "Submitting ${SLURM_SCRIPT}"
 echo "  LAMER_DIR=${LAMER_DIR}"
 echo "  LANGTABLE_DIR=${LANGTABLE_DIR}"
@@ -70,5 +78,6 @@ echo "  TMPDIR=${TMPDIR:-<default>}"
 echo "  CHECKPOINT_ROOT=${CHECKPOINT_ROOT}"
 echo "  RUN_NAME=${RUN_NAME}"
 echo "  VLA_CHECKPOINT=${VLA_CHECKPOINT}"
+echo "  SLURM_LOG_DIR=${SLURM_LOG_DIR:-<default: cwd>}"
 
-exec sbatch "$@" "${SLURM_SCRIPT}"
+exec sbatch "${SBATCH_LOG_ARGS[@]}" "$@" "${SLURM_SCRIPT}"
