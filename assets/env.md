@@ -92,7 +92,7 @@ Edit `.env.language_table` for non-secret cluster-specific settings such as:
 - `LANGTABLE_DIR`
 - `LANGTABLE_CONDA_ENV` (env name such as `ltvenv`; use plain names so `conda create -n` honors `envs_dirs`)
 - `LAMER_CONDA_ENV`
-- `CONDA_PKGS_DIRS`
+- `CONDA_CACHE_DIR` (optional base for both `CONDA_PKGS_DIRS` and `CONDA_ENVS_DIRS`)
 - `PIP_CACHE_DIR`
 - `TMPDIR`
 - `CHECKPOINT_ROOT`
@@ -116,8 +116,9 @@ This creates or updates:
 scripts/bootstrap_language_table.sh
 ```
 
-If your cluster has a tight home quota, set `CONDA_PKGS_DIRS`,
-`PIP_CACHE_DIR`, and `TMPDIR` to scratch or scrubbed storage. The bootstrap
+If your cluster has a tight home quota, set `CONDA_CACHE_DIR`,
+`CONDA_PKGS_DIRS`, `CONDA_ENVS_DIRS`, `PIP_CACHE_DIR`, and `TMPDIR` to scratch or scrubbed storage.
+The bootstrap script exports those paths before installing anything.
 script exports those paths before installing anything.
 
 The Slurm job uses the original LaMer text parquet locations:

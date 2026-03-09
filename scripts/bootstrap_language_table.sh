@@ -17,7 +17,9 @@ DEFAULT_LANGTABLE_DIR="${LAMER_DIR}/../language-table"
 LANGTABLE_DIR="${LANGTABLE_DIR:-${DEFAULT_LANGTABLE_DIR}}"
 LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
 LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-ltvenv}"
+CONDA_CACHE_DIR="${CONDA_CACHE_DIR:-}"
 CONDA_PKGS_DIRS="${CONDA_PKGS_DIRS:-}"
+CONDA_ENVS_DIRS="${CONDA_ENVS_DIRS:-}"
 PIP_CACHE_DIR="${PIP_CACHE_DIR:-}"
 TMPDIR="${TMPDIR:-}"
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-}"
@@ -57,9 +59,18 @@ fi
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
+if [ -n "${CONDA_CACHE_DIR}" ]; then
+    : "${CONDA_PKGS_DIRS:=${CONDA_CACHE_DIR}}"
+    : "${CONDA_ENVS_DIRS:=${CONDA_CACHE_DIR}}"
+fi
+
 if [ -n "${CONDA_PKGS_DIRS}" ]; then
     export CONDA_PKGS_DIRS
     mkdir -p "${CONDA_PKGS_DIRS}"
+fi
+if [ -n "${CONDA_ENVS_DIRS}" ]; then
+    export CONDA_ENVS_DIRS
+    mkdir -p "${CONDA_ENVS_DIRS}"
 fi
 if [ -n "${PIP_CACHE_DIR}" ]; then
     export PIP_CACHE_DIR
@@ -78,6 +89,7 @@ echo "LAMER_DIR=${LAMER_DIR}"
 echo "LANGTABLE_DIR=${LANGTABLE_DIR}"
 echo "LAMER_CONDA_ENV=${LAMER_CONDA_ENV}"
 echo "LANGTABLE_CONDA_ENV=${LANGTABLE_CONDA_ENV}"
+echo "CONDA_CACHE_DIR=${CONDA_CACHE_DIR:-<default>}"
 echo "CONDA_PKGS_DIRS=${CONDA_PKGS_DIRS:-<default>}"
 echo "PIP_CACHE_DIR=${PIP_CACHE_DIR:-<default>}"
 echo "TMPDIR=${TMPDIR:-<default>}"

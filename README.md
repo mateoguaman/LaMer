@@ -91,7 +91,7 @@ Then edit `.env.language_table` and set the values for your cluster, especially:
 - `LANGTABLE_DIR`
 - `LANGTABLE_CONDA_ENV` (env name such as `ltvenv`; omit `/` so `conda create -n` places it under `envs_dirs`)
 - `LAMER_CONDA_ENV`
-- `CONDA_PKGS_DIRS`
+- `CONDA_CACHE_DIR` (optional base for both `CONDA_PKGS_DIRS` and `CONDA_ENVS_DIRS`)
 - `PIP_CACHE_DIR`
 - `TMPDIR`
 - `CHECKPOINT_ROOT`
@@ -111,8 +111,8 @@ scripts/bootstrap_language_table.sh
 ```
 
 If your cluster enforces a strict home-directory quota, point
-`CONDA_PKGS_DIRS`, `PIP_CACHE_DIR`, and `TMPDIR` at scratch or scrubbed
-storage. The bootstrap script now exports those values before running
+`CONDA_CACHE_DIR`, `CONDA_PKGS_DIRS`, `CONDA_ENVS_DIRS`, `PIP_CACHE_DIR`, and `TMPDIR`
+at scratch or scrubbed storage. The bootstrap script now exports those values before running
 `conda` or `pip`.
 
 Once that file is configured, submit the Language Table job with:
