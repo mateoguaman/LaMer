@@ -116,8 +116,7 @@ This creates or updates:
 scripts/bootstrap_language_table.sh
 ```
 
-If your cluster has a tight home quota, set `CONDA_CACHE_DIR`,
-`CONDA_PKGS_DIRS`, `CONDA_ENVS_DIRS`, `PIP_CACHE_DIR`, and `TMPDIR` to scratch or scrubbed storage.
+If your cluster has a tight home quota, set `CONDA_CACHE_DIR`, `PIP_CACHE_DIR`, and `TMPDIR` to scratch or scrubbed storage.
 The bootstrap script exports those paths before installing anything.
 script exports those paths before installing anything.
 
