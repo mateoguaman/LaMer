@@ -20,15 +20,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_LAMER_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LAMER_DIR="${LAMER_DIR:-${DEFAULT_LAMER_DIR}}"
 LANGTABLE_DIR="${LANGTABLE_DIR:-$(cd "${LAMER_DIR}/../language-table" && pwd)}"
-LANGTABLE_PYTHON="${LANGTABLE_PYTHON:-${LANGTABLE_DIR}/ltvenv/bin/python}"
+LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-${LANGTABLE_DIR}/ltvenv}"
+LANGTABLE_PYTHON="${LANGTABLE_CONDA_ENV}/bin/python"
 LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
-SETUP_SCRIPT="${SETUP_SCRIPT:-}"
-TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-$HOME/data/verl-agent/text/train.parquet}"
-VAL_DATA_PATH="${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}"
-CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-${SCRATCH:-$HOME}/checkpoints/lamer}"
+TRAIN_DATA_PATH="$HOME/data/verl-agent/text/train.parquet"
+VAL_DATA_PATH="$HOME/data/verl-agent/text/test.parquet"
+CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-}"
 RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
-TRAINER_LOCAL_DIR="${TRAINER_LOCAL_DIR:-${CHECKPOINT_ROOT}/${RUN_NAME}}"
-RUN_LOG_PATH="${RUN_LOG_PATH:-${LAMER_DIR}/../${RUN_NAME}.log}"
+if [ -z "${CHECKPOINT_ROOT}" ]; then
+    echo "ERROR: CHECKPOINT_ROOT is not set."
+    echo "Set CHECKPOINT_ROOT in .env.language_table before submitting."
+    exit 1
+fi
+TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}"
+RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${SLURM_JOB_ID:-$(date +%Y%m%d-%H%M%S)}.log"
 
 TRAIN_PORT=50051
 VAL_PORT=50052
@@ -41,17 +46,15 @@ NUM_ATTEMPTS=3
 MAX_TURNS=1
 
 # VLA (inner-loop policy) — set to "" to use random actions
-VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-${SCRATCH:-$HOME}/checkpoints/language_table}"
-VLA_CHECKPOINT="${VLA_CHECKPOINT:-${VLA_CHECKPOINT_DIR}/bc_resnet_sim_checkpoint_955000}"
+VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
+VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
+if [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
+    VLA_CHECKPOINT="${VLA_CHECKPOINT_DIR}/bc_resnet_sim_checkpoint_955000"
+fi
 
 ######################
 ### Setup ############
 ######################
-if [ -n "${SETUP_SCRIPT}" ] && [ -f "${SETUP_SCRIPT}" ]; then
-    # Optional cluster-specific shell initialization.
-    source "${SETUP_SCRIPT}"
-fi
-
 module load conda/Miniforge3-25.3.1-3
 module load gcc/13.4.0
 module load cmake/3.31.8
@@ -66,6 +69,7 @@ echo "HOSTNAME: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID}"
 echo "LAMER_DIR: ${LAMER_DIR}"
 echo "LANGTABLE_DIR: ${LANGTABLE_DIR}"
+echo "LANGTABLE_CONDA_ENV: ${LANGTABLE_CONDA_ENV}"
 echo "TRAINER_LOCAL_DIR: ${TRAINER_LOCAL_DIR}"
 
 ######################

@@ -89,18 +89,18 @@ cp .env.language_table.secrets.example .env.language_table.secrets
 Then edit `.env.language_table` and set the values for your cluster, especially:
 
 - `LANGTABLE_DIR`
-- `LANGTABLE_PYTHON`
+- `LANGTABLE_CONDA_ENV`
 - `LAMER_CONDA_ENV`
-- `TRAIN_DATA_PATH`
-- `VAL_DATA_PATH`
 - `CHECKPOINT_ROOT`
+- `RUN_NAME`
 - `VLA_CHECKPOINT_DIR`
-- `SETUP_SCRIPT` if your cluster needs custom shell initialization
 
 Then edit `.env.language_table.secrets` for secrets such as:
 
+- `HF_TOKEN_FILE`
+- `WANDB_USERNAME`
 - `WANDB_API_KEY` or `WANDB_API_KEY_FILE`
-- `HF_TOKEN` if you do not want to load it via `HF_TOKEN_FILE`
+- `HF_TOKEN`
 
 Bootstrap both environments with conda:
 
@@ -117,9 +117,7 @@ scripts/submit_language_table.sh
 You can still override any variable for a single run:
 
 ```bash
-RUN_NAME=lt_smoketest TRAIN_DATA_PATH=/path/to/train.parquet \
-VAL_DATA_PATH=/path/to/test.parquet \
-scripts/submit_language_table.sh
+RUN_NAME=lt_smoketest scripts/submit_language_table.sh
 ```
 
 The wrapper exports the environment variables and then calls:
@@ -127,6 +125,15 @@ The wrapper exports the environment variables and then calls:
 ```bash
 sbatch scripts/slurm/lamer_language_table.slurm
 ```
+
+The Slurm job uses the original LaMer text parquet locations:
+
+- `~/data/verl-agent/text/train.parquet`
+- `~/data/verl-agent/text/test.parquet`
+
+Checkpoints and trainer logs are written under:
+
+- `${CHECKPOINT_ROOT}/${RUN_NAME}`
 
 **Docs:**
 - [VLA integration plan and design decisions](docs/vla_integration.md)

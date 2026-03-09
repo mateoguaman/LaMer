@@ -90,33 +90,38 @@ cp .env.language_table.secrets.example .env.language_table.secrets
 Edit `.env.language_table` for non-secret cluster-specific settings such as:
 
 - `LANGTABLE_DIR`
-- `LANGTABLE_PYTHON`
+- `LANGTABLE_CONDA_ENV`
 - `LAMER_CONDA_ENV`
-- `TRAIN_DATA_PATH`
-- `VAL_DATA_PATH`
 - `CHECKPOINT_ROOT`
+- `RUN_NAME`
 - `VLA_CHECKPOINT_DIR`
-- `SETUP_SCRIPT`
 
 Edit `.env.language_table.secrets` for secrets such as:
 
+- `HF_TOKEN_FILE`
+- `WANDB_USERNAME`
 - `WANDB_API_KEY` or `WANDB_API_KEY_FILE`
-- `HF_TOKEN` if you do not want to use `HF_TOKEN_FILE`
+- `HF_TOKEN`
 
 **Step 2: Bootstrap both environments with conda**
 
 This creates or updates:
 
 - the named LaMer conda env (`LAMER_CONDA_ENV`, default `lamer`)
-- the Language Table env at `language-table/ltvenv`
+- the Language Table env at `LANGTABLE_CONDA_ENV`
 
 ```bash
 scripts/bootstrap_language_table.sh
 ```
 
-`SETUP_SCRIPT` is optional. If you already use a shell script like
-`setup_mateo.sh` to export `HF_HOME`, token locations, WandB config, or cache
-directories, keep using it by pointing `SETUP_SCRIPT` at that file.
+The Slurm job uses the original LaMer text parquet locations:
+
+- `~/data/verl-agent/text/train.parquet`
+- `~/data/verl-agent/text/test.parquet`
+
+Checkpoints and trainer logs are written under:
+
+- `${CHECKPOINT_ROOT}/${RUN_NAME}`
 
 **Step 3: Verify the language-table environment works standalone**
 

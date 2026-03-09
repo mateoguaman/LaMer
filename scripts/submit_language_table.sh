@@ -19,24 +19,27 @@ DEFAULT_LANGTABLE_DIR="${LAMER_DIR}/../language-table"
 
 export LAMER_DIR="${LAMER_DIR}"
 export LANGTABLE_DIR="${LANGTABLE_DIR:-${DEFAULT_LANGTABLE_DIR}}"
-export LANGTABLE_PYTHON="${LANGTABLE_PYTHON:-${LANGTABLE_DIR}/ltvenv/bin/python}"
+export LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-${LANGTABLE_DIR}/ltvenv}"
 export LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
-export TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-$HOME/data/verl-agent/text/train.parquet}"
-export VAL_DATA_PATH="${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}"
-export CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-${SCRATCH:-$HOME}/checkpoints/lamer}"
+export CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-}"
 export RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
-export TRAINER_LOCAL_DIR="${TRAINER_LOCAL_DIR:-${CHECKPOINT_ROOT}/${RUN_NAME}}"
-export RUN_LOG_PATH="${RUN_LOG_PATH:-${LAMER_DIR}/../${RUN_NAME}.log}"
-export VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-${SCRATCH:-$HOME}/checkpoints/language_table}"
-export VLA_CHECKPOINT="${VLA_CHECKPOINT:-${VLA_CHECKPOINT_DIR}/bc_resnet_sim_checkpoint_955000}"
+export VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
+export VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
 export HF_HOME="${HF_HOME:-}"
 export HF_TOKEN_FILE="${HF_TOKEN_FILE:-}"
 export WANDB_USERNAME="${WANDB_USERNAME:-}"
-export UV_CACHE_DIR="${UV_CACHE_DIR:-}"
-export UV_PYTHON_INSTALL_DIR="${UV_PYTHON_INSTALL_DIR:-}"
 export WANDB_API_KEY="${WANDB_API_KEY:-}"
 export WANDB_API_KEY_FILE="${WANDB_API_KEY_FILE:-}"
 export HF_TOKEN="${HF_TOKEN:-}"
+
+if [ -z "${CHECKPOINT_ROOT}" ]; then
+    echo "ERROR: CHECKPOINT_ROOT is not set."
+    echo "Set it in .env.language_table before submitting."
+    exit 1
+fi
+if [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
+    export VLA_CHECKPOINT="${VLA_CHECKPOINT_DIR}/bc_resnet_sim_checkpoint_955000"
+fi
 
 if [ -n "${HF_HOME}" ]; then
     export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-${HF_HOME}/hub}"
@@ -59,11 +62,10 @@ fi
 echo "Submitting ${SLURM_SCRIPT}"
 echo "  LAMER_DIR=${LAMER_DIR}"
 echo "  LANGTABLE_DIR=${LANGTABLE_DIR}"
+echo "  LANGTABLE_CONDA_ENV=${LANGTABLE_CONDA_ENV}"
 echo "  LAMER_CONDA_ENV=${LAMER_CONDA_ENV}"
-echo "  TRAIN_DATA_PATH=${TRAIN_DATA_PATH}"
-echo "  VAL_DATA_PATH=${VAL_DATA_PATH}"
-echo "  TRAINER_LOCAL_DIR=${TRAINER_LOCAL_DIR}"
+echo "  CHECKPOINT_ROOT=${CHECKPOINT_ROOT}"
+echo "  RUN_NAME=${RUN_NAME}"
 echo "  VLA_CHECKPOINT=${VLA_CHECKPOINT}"
-echo "  SETUP_SCRIPT=${SETUP_SCRIPT:-}"
 
 exec sbatch "$@" "${SLURM_SCRIPT}"

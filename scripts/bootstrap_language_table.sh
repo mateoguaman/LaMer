@@ -16,12 +16,7 @@ LAMER_DIR="${LAMER_DIR:-${BASE_LAMER_DIR}}"
 DEFAULT_LANGTABLE_DIR="${LAMER_DIR}/../language-table"
 LANGTABLE_DIR="${LANGTABLE_DIR:-${DEFAULT_LANGTABLE_DIR}}"
 LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
-LANGTABLE_ENV_PREFIX="${LANGTABLE_ENV_PREFIX:-${LANGTABLE_DIR}/ltvenv}"
-SETUP_SCRIPT="${SETUP_SCRIPT:-}"
-if [ -n "${SETUP_SCRIPT}" ] && [ -f "${SETUP_SCRIPT}" ]; then
-    # shellcheck disable=SC1090
-    source "${SETUP_SCRIPT}"
-fi
+LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-${LANGTABLE_DIR}/ltvenv}"
 
 if [ ! -d "${LAMER_DIR}" ]; then
     echo "ERROR: LAMER_DIR does not exist: ${LAMER_DIR}"
@@ -61,7 +56,7 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 echo "LAMER_DIR=${LAMER_DIR}"
 echo "LANGTABLE_DIR=${LANGTABLE_DIR}"
 echo "LAMER_CONDA_ENV=${LAMER_CONDA_ENV}"
-echo "LANGTABLE_ENV_PREFIX=${LANGTABLE_ENV_PREFIX}"
+echo "LANGTABLE_CONDA_ENV=${LANGTABLE_CONDA_ENV}"
 
 echo "=== Bootstrapping LaMer env (${LAMER_CONDA_ENV}) ==="
 if ! conda env list | awk '{print $1}' | grep -qx "${LAMER_CONDA_ENV}"; then
@@ -71,16 +66,16 @@ conda activate "${LAMER_CONDA_ENV}"
 python -m pip install --upgrade pip
 python -m pip install -r "${LAMER_DIR}/requirements.txt"
 
-echo "=== Bootstrapping language-table env (${LANGTABLE_ENV_PREFIX}) ==="
-if [ -e "${LANGTABLE_ENV_PREFIX}" ] && [ ! -d "${LANGTABLE_ENV_PREFIX}/conda-meta" ]; then
-    echo "ERROR: ${LANGTABLE_ENV_PREFIX} exists but is not a conda env."
-    echo "Remove it or set LANGTABLE_ENV_PREFIX to a different path."
+echo "=== Bootstrapping language-table env (${LANGTABLE_CONDA_ENV}) ==="
+if [ -e "${LANGTABLE_CONDA_ENV}" ] && [ ! -d "${LANGTABLE_CONDA_ENV}/conda-meta" ]; then
+    echo "ERROR: ${LANGTABLE_CONDA_ENV} exists but is not a conda env."
+    echo "Remove it or set LANGTABLE_CONDA_ENV to a different path."
     exit 1
 fi
-if [ ! -d "${LANGTABLE_ENV_PREFIX}/conda-meta" ]; then
-    conda create -y -p "${LANGTABLE_ENV_PREFIX}" python=3.10
+if [ ! -d "${LANGTABLE_CONDA_ENV}/conda-meta" ]; then
+    conda create -y -p "${LANGTABLE_CONDA_ENV}" python=3.10
 fi
-conda activate "${LANGTABLE_ENV_PREFIX}"
+conda activate "${LANGTABLE_CONDA_ENV}"
 python -m pip install --upgrade pip
 python -m pip install -r "${LANGTABLE_DIR}/requirements.txt"
 python -m pip install --no-deps \
@@ -94,10 +89,10 @@ LaMer env:
   ${LAMER_CONDA_ENV}
 
 language-table env:
-  ${LANGTABLE_ENV_PREFIX}
+  ${LANGTABLE_CONDA_ENV}
 
-LANGTABLE_PYTHON should be:
-  ${LANGTABLE_ENV_PREFIX}/bin/python
+language-table python:
+  ${LANGTABLE_CONDA_ENV}/bin/python
 
 Next steps:
   1. cp .env.language_table.example .env.language_table
