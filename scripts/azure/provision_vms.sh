@@ -156,6 +156,21 @@ for vm in "${VM_TRAIN_0}" "${VM_TRAIN_1}" "${VM_ENV}"; do
     bootstrap_vm "${vm}"
 done
 
+# Copy the SSH private key to vm-train-0 so it can SSH into vm-train-1
+# to form the Ray cluster. The key is the same one used to create all VMs.
+echo ""
+echo "=== Pushing SSH key to vm-train-0 ==="
+TRAIN0_IP=$(az vm show -g "${RG}" -n "${VM_TRAIN_0}" -d --query publicIps -o tsv 2>/dev/null || true)
+if [ -n "${TRAIN0_IP}" ]; then
+    ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${ADMIN}@${TRAIN0_IP}" \
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+    scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
+        "${SSH_KEY}" "${ADMIN}@${TRAIN0_IP}:~/.ssh/azure_key"
+    ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${ADMIN}@${TRAIN0_IP}" \
+        "chmod 600 ~/.ssh/azure_key"
+    echo "  SSH key pushed to vm-train-0:~/.ssh/azure_key"
+fi
+
 print_ips
 
 echo ""
