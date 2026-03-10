@@ -105,6 +105,9 @@ conda activate "${LAMER_CONDA_ENV}"
 set -u
 python -m pip install --upgrade pip
 python -m pip install -r "${LAMER_DIR}/requirements.txt"
+# flash-attn compiles CUDA kernels against torch at build time,
+# so it must be installed after torch (pulled in by vllm above).
+python -m pip install flash-attn
 
 echo ""
 echo "=== Setting up language-table conda env (${LANGTABLE_CONDA_ENV}) ==="
