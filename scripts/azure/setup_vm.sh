@@ -105,9 +105,10 @@ conda activate "${LAMER_CONDA_ENV}"
 set -u
 python -m pip install --upgrade pip
 python -m pip install -r "${LAMER_DIR}/requirements.txt"
-# flash-attn compiles CUDA kernels against torch at build time,
-# so it must be installed after torch (pulled in by vllm above).
-python -m pip install flash-attn --no-build-isolation
+# flash-attn must match the exact torch version and C++ ABI.
+# Prebuilt wheel from GitHub releases: torch 2.6, CUDA 12, CXX11 ABI=False, Python 3.12.
+python -m pip install --no-cache-dir \
+    https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
 
 echo ""
 echo "=== Setting up language-table conda env (${LANGTABLE_CONDA_ENV}) ==="

@@ -100,6 +100,9 @@ export NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_SOCKET_NTHREADS=1
 export NCCL_NSOCKS_PERTHREAD=1
 export NCCL_TIMEOUT=1200000
+# Azure NC-series VMs use Ethernet, not InfiniBand — force NCCL to use TCP sockets.
+export NCCL_IB_DISABLE=1
+export NCCL_NET=Socket
 export HF_HUB_ETAG_TIMEOUT=60
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
@@ -165,6 +168,8 @@ fi
 set +u
 conda activate "${LAMER_CONDA_ENV}"
 set -u
+export NCCL_IB_DISABLE=1
+export NCCL_NET=Socket
 ray stop --force 2>/dev/null || true
 ray start --address=${HEAD_IP}:${RAY_PORT} \
     --num-gpus=${N_GPUS_PER_NODE} \
