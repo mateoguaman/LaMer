@@ -13,7 +13,7 @@
 #   trainer.default_local_dir -- <CHECKPOINT_ROOT>/<RUN_NAME>
 
 defaults:
-  - ppo_trainer   # loads verl/trainer/config/ppo_trainer.yaml as the base
+  - /ppo_trainer   # loads verl/trainer/config/ppo_trainer.yaml as the base
   - _self_        # this file's keys override the base
 
 # ---------------------------------------------------------------------------
