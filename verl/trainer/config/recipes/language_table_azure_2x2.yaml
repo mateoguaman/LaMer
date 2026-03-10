@@ -12,7 +12,7 @@
 #       trainer.default_local_dir=<checkpoint_dir>
 
 defaults:
-  - recipes/language_table_base
+  - language_table_base
   - _self_
 
 trainer:
