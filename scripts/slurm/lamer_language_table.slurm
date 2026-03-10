@@ -31,8 +31,9 @@ if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "Set CHECKPOINT_ROOT in .env.language_table before submitting."
     exit 1
 fi
-TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}"
-RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${SLURM_JOB_ID:-$(date +%Y%m%d-%H%M%S)}.log"
+RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d-%H%M%S)}"
+TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}/${RUN_ID}"
+RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${RUN_ID}.log"
 
 TRAIN_PORT=50051
 VAL_PORT=50052

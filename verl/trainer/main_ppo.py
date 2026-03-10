@@ -57,7 +57,11 @@ class TaskRunner:
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False))
 
-        if config.env.get('remote', False):
+        if config.env.get('remote', False) and 'language_table' in config.env.env_name.lower():
+            # Language Table uses remote envs but needs LaMer-side prompt/projection
+            from agent_system.environments.language_table import make_envs
+            envs, val_envs = make_envs(config)
+        elif config.env.get('remote', False):
             if config.env.get('sharded', False):
                 from agent_system.environments.remote import ShardedRemoteEnvironmentManager
                 envs = ShardedRemoteEnvironmentManager(list(config.env.remote_addresses))
