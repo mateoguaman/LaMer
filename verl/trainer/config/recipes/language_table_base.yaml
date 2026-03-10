@@ -1,0 +1,120 @@
+# Base recipe for LaMer language-table training.
+#
+# Defines all hyperparameters shared across compute environments (Tillicum, Azure).
+# Environment-specific recipes (language_table_slurm.yaml, language_table_azure_2x2.yaml)
+# extend this with their node/GPU counts.
+#
+# Runtime values NOT set here (must be passed as CLI overrides):
+#   data.train_files         -- set by data prep step
+#   data.val_files           -- set by data prep step
+#   env.remote_address       -- <env-vm-ip>:50051
+#   env.remote_val_address   -- <env-vm-ip>:50052
+#   trainer.experiment_name  -- e.g. language_table_lamer_qwen3_4b
+#   trainer.default_local_dir -- <CHECKPOINT_ROOT>/<RUN_NAME>
+
+defaults:
+  - ppo_trainer   # loads verl/trainer/config/ppo_trainer.yaml as the base
+  - _self_        # this file's keys override the base
+
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
+data:
+  max_prompt_length: 2048
+  max_response_length: 1024
+  train_batch_size: 16       # must equal TRAIN_NUM_ENVS (number of parallel envs)
+  val_batch_size: 128        # must equal VAL_NUM_ENVS
+  filter_overlong_prompts: True
+  truncation: error
+  return_raw_chat: True
+
+# ---------------------------------------------------------------------------
+# Model + actor/rollout/ref
+# ---------------------------------------------------------------------------
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen3-4B
+    enable_thinking: False   # Qwen3 thinking mode off for robot action generation
+    use_remove_padding: True
+    enable_gradient_checkpointing: True
+
+  actor:
+    optim:
+      lr: 1e-6
+    ppo_mini_batch_size: 64
+    ppo_micro_batch_size_per_gpu: 16
+    use_kl_loss: False
+    kl_loss_type: low_var_kl
+    use_invalid_action_penalty: True
+    invalid_action_penalty_coef: 0.5
+    fsdp_config:
+      param_offload: True    # offload params to CPU RAM (required for 4B on 2 GPUs)
+      optimizer_offload: True
+
+  rollout:
+    name: vllm
+    tensor_model_parallel_size: 2
+    gpu_memory_utilization: 0.6
+    enable_chunked_prefill: False
+    enforce_eager: False
+    free_cache_engine: False
+    log_prob_micro_batch_size_per_gpu: 32
+    max_num_batched_tokens: 32768
+    val_kwargs:
+      temperature: 0.7
+      top_p: 0.8
+      top_k: 20
+      do_sample: True
+
+  ref:
+    log_prob_micro_batch_size_per_gpu: 32
+    fsdp_config:
+      param_offload: True
+
+# ---------------------------------------------------------------------------
+# Algorithm
+# ---------------------------------------------------------------------------
+algorithm:
+  adv_estimator: gigpo
+  use_kl_in_reward: False
+  gamma: 0.95
+  step_gamma: 0.95   # per-step discount within a trajectory
+  traj_gamma: 0.9    # discount across trajectories
+  gigpo:
+    step_advantage_w: 1.0
+    mode: mean_norm
+
+# ---------------------------------------------------------------------------
+# Reward
+# ---------------------------------------------------------------------------
+reward_model:
+  reward_manager: episode
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+env:
+  env_name: language_table
+  seed: 0
+  remote: True
+  # remote_address and remote_val_address are runtime values; set via CLI override
+  num_attempts: 3
+  max_turns: 1
+  reflection_type: reflection_only
+  rollout:
+    n: 8   # group size (GiGPO rollouts per prompt); must equal GROUP_SIZE in env servers
+
+# ---------------------------------------------------------------------------
+# Trainer (shared; node/GPU counts set in environment-specific recipes)
+# ---------------------------------------------------------------------------
+trainer:
+  project_name: lamer
+  logger: [console, wandb]
+  critic_warmup: 0
+  total_epochs: 300
+  save_freq: 10
+  test_freq: 5
+  val_before_train: True
+  log_val_generations: 1
+  max_actor_ckpt_to_keep: 1
+  max_critic_ckpt_to_keep: 1

@@ -1,0 +1,20 @@
+# Tillicum/SLURM recipe: 1 node × 4 training GPUs (GPUs 1-4, GPU 0 reserved for env servers).
+# Extends the shared language_table_base recipe.
+#
+# Usage (from lamer_language_table.slurm):
+#   python3 -m verl.trainer.main_ppo \
+#       --config-name recipes/language_table_slurm \
+#       env.remote_address=127.0.0.1:50051 \
+#       env.remote_val_address=127.0.0.1:50052 \
+#       data.train_files=<path>/train.parquet \
+#       data.val_files=<path>/test.parquet \
+#       trainer.experiment_name=<run_name> \
+#       trainer.default_local_dir=<checkpoint_dir>
+
+defaults:
+  - recipes/language_table_base
+  - _self_
+
+trainer:
+  n_gpus_per_node: 4   # GPUs 1-4 (GPU 0 used by env servers, isolated via CUDA_VISIBLE_DEVICES)
+  nnodes: 1
