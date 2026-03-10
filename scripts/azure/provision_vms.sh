@@ -31,34 +31,41 @@ VM_ENV="${AZURE_VM_ENV:?'Set AZURE_VM_ENV in .env.azure'}"
 TRAIN_SIZE="${AZURE_TRAIN_VM_SIZE:?'Set AZURE_TRAIN_VM_SIZE in .env.azure'}"
 ENV_SIZE="${AZURE_ENV_VM_SIZE:?'Set AZURE_ENV_VM_SIZE in .env.azure'}"
 
-# Push .env.azure (and .env.language_table.secrets if present) to each VM.
-# Called after VM creation so that setup_vm.sh can find them without manual copying.
-push_env_files() {
+# Clone LaMer repo and push env files to a VM.
+# Called after VM creation so that setup_vm.sh exists and can find its config.
+bootstrap_vm() {
     local vm=$1
     local public_ip
     public_ip=$(az vm show -g "${RG}" -n "${vm}" -d --query publicIps -o tsv 2>/dev/null || true)
     if [ -z "${public_ip}" ]; then
-        echo "  WARNING: could not get public IP for ${vm}, skipping env file push."
+        echo "  WARNING: could not get public IP for ${vm}, skipping bootstrap."
         return 0
     fi
 
     local ssh_opts="-i ${SSH_KEY} -o StrictHostKeyChecking=no -o ConnectTimeout=10"
     local remote="${ADMIN}@${public_ip}"
     local remote_dir="/home/${ADMIN}/LaMer"
+    local git_repo="${LAMER_GIT_REPO:?'Set LAMER_GIT_REPO in .env.azure'}"
 
     # Wait for SSH to become available (VM may still be booting)
     echo "  Waiting for SSH on ${vm} (${public_ip})..."
     for attempt in $(seq 1 24); do
-        if ssh ${ssh_opts} "${remote}" "mkdir -p ${remote_dir}" 2>/dev/null; then
+        if ssh ${ssh_opts} "${remote}" "true" 2>/dev/null; then
             break
         fi
         if [ "${attempt}" -eq 24 ]; then
-            echo "  WARNING: SSH not ready on ${vm} after 2 min, skipping env file push."
+            echo "  WARNING: SSH not ready on ${vm} after 2 min, skipping bootstrap."
             return 0
         fi
         sleep 5
     done
 
+    # Clone the LaMer repo (setup_vm.sh, start_*.sh, etc. live inside it)
+    echo "  Cloning LaMer on ${vm}..."
+    ssh ${ssh_opts} "${remote}" \
+        "if [ ! -d ${remote_dir}/.git ]; then rm -rf ${remote_dir} && git clone ${git_repo} ${remote_dir}; else echo '  LaMer already cloned'; fi"
+
+    # Push env files into the cloned repo (gitignored, not in the clone)
     echo "  Pushing .env.azure to ${vm}:${remote_dir}/.env.azure"
     scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
         "${ENV_FILE}" "${remote}:${remote_dir}/.env.azure"
@@ -142,17 +149,17 @@ create_vm "${VM_ENV}"     "${ENV_SIZE}"   256
 # Azure VMs in the same VNet can reach each other on all ports by default,
 # so no additional NSG rules are needed for intra-VNet traffic.
 
-# Push env files so setup_vm.sh can run without manual scp.
+# Clone repo and push env files so setup_vm.sh can run on each VM.
 echo ""
-echo "=== Pushing env files to VMs ==="
+echo "=== Bootstrapping VMs (clone repo + push env files) ==="
 for vm in "${VM_TRAIN_0}" "${VM_TRAIN_1}" "${VM_ENV}"; do
-    push_env_files "${vm}"
+    bootstrap_vm "${vm}"
 done
 
 print_ips
 
 echo ""
 echo "Next steps:"
-echo "  1. SSH into each VM and run: bash scripts/azure/setup_vm.sh"
-echo "  2. On vm-env:     bash scripts/azure/start_env_servers.sh"
-echo "  3. On vm-train-0: bash scripts/azure/start_training.sh <vm-env-private-ip> <vm-train-1-private-ip>"
+echo "  1. SSH into each VM and run: bash ~/LaMer/scripts/azure/setup_vm.sh --skip-clone"
+echo "  2. On vm-env:     bash ~/LaMer/scripts/azure/start_env_servers.sh"
+echo "  3. On vm-train-0: bash ~/LaMer/scripts/azure/start_training.sh <vm-env-private-ip> <vm-train-1-private-ip>"

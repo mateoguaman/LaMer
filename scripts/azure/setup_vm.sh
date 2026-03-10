@@ -46,25 +46,29 @@ echo ""
 ### Clone repos ######
 ######################
 if [ "${SKIP_CLONE}" = false ]; then
-    if [ -z "${LAMER_GIT_REPO}" ] || [ -z "${LANGTABLE_GIT_REPO}" ]; then
-        echo "ERROR: LAMER_GIT_REPO and LANGTABLE_GIT_REPO must be set in .env.azure"
-        echo "  e.g. LAMER_GIT_REPO=https://github.com/your-user/LaMer.git"
+    if [ -z "${LAMER_GIT_REPO}" ]; then
+        echo "ERROR: LAMER_GIT_REPO must be set in .env.azure"
         exit 1
     fi
-
     if [ ! -d "${LAMER_DIR}/.git" ]; then
         echo "Cloning LaMer..."
         git clone "${LAMER_GIT_REPO}" "${LAMER_DIR}"
     else
         echo "LaMer already cloned at ${LAMER_DIR}"
     fi
+fi
 
-    if [ ! -d "${LANGTABLE_DIR}/.git" ]; then
-        echo "Cloning language-table..."
-        git clone "${LANGTABLE_GIT_REPO}" "${LANGTABLE_DIR}"
-    else
-        echo "language-table already cloned at ${LANGTABLE_DIR}"
+# Always clone language-table if missing (--skip-clone only skips LaMer,
+# which provision_vms.sh already cloned)
+if [ ! -d "${LANGTABLE_DIR}/.git" ]; then
+    if [ -z "${LANGTABLE_GIT_REPO}" ]; then
+        echo "ERROR: LANGTABLE_GIT_REPO must be set in .env.azure"
+        exit 1
     fi
+    echo "Cloning language-table..."
+    git clone "${LANGTABLE_GIT_REPO}" "${LANGTABLE_DIR}"
+else
+    echo "language-table already cloned at ${LANGTABLE_DIR}"
 fi
 
 if [ ! -d "${LAMER_DIR}" ]; then
