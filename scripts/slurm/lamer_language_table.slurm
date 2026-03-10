@@ -222,14 +222,12 @@ python3 -m examples.data_preprocess.prepare \
     --train_data_size ${TRAIN_NUM_ENVS} \
     --val_data_size ${VAL_NUM_ENVS}
 
-python3 -m verl.trainer.main_ppo \
-    --config-name recipes/language_table_slurm \
-    data.train_files="${TRAIN_DATA_PATH}" \
-    data.val_files="${VAL_DATA_PATH}" \
-    env.remote_address="127.0.0.1:${TRAIN_PORT}" \
-    env.remote_val_address="127.0.0.1:${VAL_PORT}" \
-    trainer.experiment_name="${RUN_NAME}" \
-    trainer.default_local_dir="${TRAINER_LOCAL_DIR}" \
-    2>&1 | tee -a "${RUN_LOG_PATH}"
+export TRAIN_DATA_PATH VAL_DATA_PATH
+export TRAIN_NUM_ENVS VAL_NUM_ENVS GROUP_SIZE
+export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
+export ENV_ADDRESS="127.0.0.1:${TRAIN_PORT}"
+export VAL_ADDRESS="127.0.0.1:${VAL_PORT}"
+
+bash "${LAMER_DIR}/examples/language_table/lamer_language_table_slurm.sh"
 
 echo "END TIME: $(date)"

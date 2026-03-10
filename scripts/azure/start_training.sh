@@ -222,19 +222,17 @@ python3 -m examples.data_preprocess.prepare \
 echo ""
 echo "=== Starting LaMer training ==="
 echo "  Nodes: ${NNODES}, GPUs/node: ${N_GPUS_PER_NODE}, Total: ${TOTAL_GPUS}"
-echo "  Recipe: recipes/language_table_azure_2x2"
+echo "  Script: examples/language_table/lamer_language_table_azure_2x2.sh"
 echo "  Log: ${RUN_LOG_PATH}"
 echo ""
 
-python3 -m verl.trainer.main_ppo \
-    --config-name recipes/language_table_azure_2x2 \
-    data.train_files="${TRAIN_DATA_PATH}" \
-    data.val_files="${VAL_DATA_PATH}" \
-    env.remote_address="${ENV_VM_IP}:${TRAIN_PORT}" \
-    env.remote_val_address="${ENV_VM_IP}:${VAL_PORT}" \
-    trainer.experiment_name="${RUN_NAME}" \
-    trainer.default_local_dir="${TRAINER_LOCAL_DIR}" \
-    2>&1 | tee -a "${RUN_LOG_PATH}"
+# Export vars that the example script reads
+export TRAIN_DATA_PATH VAL_DATA_PATH
+export ENV_VM_IP TRAIN_PORT VAL_PORT
+export TRAIN_NUM_ENVS VAL_NUM_ENVS GROUP_SIZE
+export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
+
+bash "${LAMER_DIR}/examples/language_table/lamer_language_table_azure_2x2.sh"
 
 echo ""
 echo "END TIME: $(date)"
