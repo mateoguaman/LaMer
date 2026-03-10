@@ -43,7 +43,12 @@ if [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
 fi
 
 # Find language-table python
-source "$(conda info --base)/etc/profile.d/conda.sh"
+# Miniforge may not be on PATH in a fresh shell; source it from known location.
+if ! command -v conda &>/dev/null; then
+    source "${HOME}/miniforge3/etc/profile.d/conda.sh"
+else
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+fi
 LANGTABLE_PYTHON="$(conda run -n "${LANGTABLE_CONDA_ENV}" which python)"
 echo "Using language-table python: ${LANGTABLE_PYTHON}"
 

@@ -82,7 +82,12 @@ echo ""
 ######################
 ### Activate conda ###
 ######################
-source "$(conda info --base)/etc/profile.d/conda.sh"
+# Miniforge may not be on PATH in a fresh shell; source it from known location.
+if ! command -v conda &>/dev/null; then
+    source "${HOME}/miniforge3/etc/profile.d/conda.sh"
+else
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+fi
 set +u
 conda activate "${LAMER_CONDA_ENV}"
 set -u
@@ -152,7 +157,11 @@ echo "  Ray head started."
 echo "Starting Ray worker on ${TRAIN1_IP}..."
 ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no "${ADMIN}@${TRAIN1_IP}" bash -l <<REMOTE_EOF
 set -euo pipefail
-source "\$(conda info --base)/etc/profile.d/conda.sh"
+if ! command -v conda &>/dev/null; then
+    source "\${HOME}/miniforge3/etc/profile.d/conda.sh"
+else
+    source "\$(conda info --base)/etc/profile.d/conda.sh"
+fi
 set +u
 conda activate "${LAMER_CONDA_ENV}"
 set -u
