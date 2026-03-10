@@ -8,4 +8,6 @@ lamer-*.out
 lamer-*.err
 .env.language_table
 .env.language_table.secrets
-docs/azure_ml_guide.md
+.env.azure
+.env.azure.secrets
+logs/

@@ -75,6 +75,8 @@ echo "TRAINER_LOCAL_DIR: ${TRAINER_LOCAL_DIR}"
 echo "CONDA_PKGS_DIRS: ${CONDA_PKGS_DIRS:-<default>}"
 echo "PIP_CACHE_DIR: ${PIP_CACHE_DIR:-<default>}"
 echo "TMPDIR: ${TMPDIR:-<default>}"
+echo "WANDB_DATA_DIR: ${WANDB_DATA_DIR:-<default>}"
+echo "XDG_CACHE_HOME: ${XDG_CACHE_HOME:-<default>}"
 
 ######################
 ### Environment ######
@@ -84,6 +86,9 @@ export NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_SOCKET_NTHREADS=1
 export NCCL_NSOCKS_PERTHREAD=1
 export NCCL_TIMEOUT=1200000
+if [ -n "${WANDB_DATA_DIR:-}" ]; then
+    export WANDB_DATA_DIR
+fi
 export HF_HUB_ETAG_TIMEOUT=60
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
@@ -92,6 +97,7 @@ mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")"
 [ -n "${PIP_CACHE_DIR:-}" ] && mkdir -p "${PIP_CACHE_DIR}"
 [ -n "${TMPDIR:-}" ] && mkdir -p "${TMPDIR}"
 [ -n "${XDG_CACHE_HOME:-}" ] && mkdir -p "${XDG_CACHE_HOME}"
+[ -n "${WANDB_DATA_DIR:-}" ] && mkdir -p "${WANDB_DATA_DIR}"
 
 # Language-table needs its repo on PYTHONPATH
 export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
