@@ -63,6 +63,8 @@ class TaskRunner:
             from agent_system.environments.minesweeper import make_envs
         elif 'maze' in config.env.env_name.lower():
             from agent_system.environments.maze import make_envs
+        elif 'navigationsingle' in config.env.env_name.lower():
+            from agent_system.environments.navigation_single import make_envs
         elif 'navigation' in config.env.env_name.lower():
             from agent_system.environments.navigation import make_envs
         elif 'alfworld' in config.env.env_name.lower():
