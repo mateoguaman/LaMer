@@ -1111,6 +1111,13 @@ class RayPPOTrainer:
                     # batch = batch.union(gen_batch_output)
                     del batch
                     batch = gen_batch_output
+
+                    # Extract VLA health metrics (from language_table env server)
+                    # so they get logged to wandb alongside training metrics.
+                    vla_metrics = batch.meta_info.pop("vla_metrics", None) if batch.meta_info else None
+                    if vla_metrics:
+                        metrics.update(vla_metrics)
+
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.GiGPO:
                         step_rewards_tensor = core_gigpo.compute_step_discounted_returns(
                             batch=batch,

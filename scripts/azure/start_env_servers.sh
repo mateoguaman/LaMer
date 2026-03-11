@@ -81,8 +81,14 @@ echo "  Validation: port ${VAL_PORT} (${VAL_NUM_ENVS} envs)"
 echo "  Bind:       0.0.0.0 (accessible from training VMs)"
 echo ""
 
-LOG_DIR="${LAMER_DIR}/logs"
+# Unique session ID for this env server run (used in logs + NaN dumps)
+ENV_SESSION_ID="env-$(date +%Y%m%d-%H%M%S)"
+export LAVA_SESSION_ID="${ENV_SESSION_ID}"
+
+LOG_DIR="${LAMER_DIR}/logs/${ENV_SESSION_ID}"
 mkdir -p "${LOG_DIR}"
+echo "  Session ID: ${ENV_SESSION_ID}"
+echo "  Log dir:    ${LOG_DIR}"
 
 # Training server
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
@@ -132,7 +138,7 @@ wait_for_port() {
         sleep 2
     done
     echo "  ERROR: ${name} on port ${port} did not start after ${max_attempts} attempts"
-    echo "  Check logs: ${LOG_DIR}/env_${name,,}.log"
+    echo "  Check logs: ${LOG_DIR}/env_${name,,}.log (session: ${ENV_SESSION_ID})"
     return 1
 }
 

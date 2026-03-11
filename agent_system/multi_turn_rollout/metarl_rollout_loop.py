@@ -331,6 +331,7 @@ class TrajectoryCollector:
         total_batch_list = [[] for _ in range(batch_size)]
         total_infos = [[] for _ in range(batch_size)]
         episode_lengths = np.zeros(batch_size, dtype=np.int32)
+        _vla_step_stats = []  # collects per-outer-step VLA health stats
 
         phase_and_steps = []
         for attempt_idx in range(num_attempts):
@@ -392,7 +393,11 @@ class TrajectoryCollector:
                 text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
                 
                 next_obs, rewards, dones, infos = envs.step(text_actions, phase=phase)
-                
+
+                # Collect VLA health stats if present (from language_table env server)
+                if infos and "vla_stats" in infos[0]:
+                    _vla_step_stats.append(infos[0]["vla_stats"])
+
                 if len(rewards.shape) == 2:
                     rewards = rewards.squeeze(1)
                 if len(dones.shape) == 2:
@@ -444,8 +449,43 @@ class TrajectoryCollector:
                     total_batch_list=total_batch_list,
                     episode_lengths=episode_lengths,
                     )
-        
-        return total_batch_list, episode_lengths, success, traj_uid, traj_cot_logs
+
+        # Aggregate VLA health stats across all outer steps in this rollout.
+        # Same aggregation logic as LAVAPolicy.get_and_reset_step_stats():
+        # means are averaged, maxes take the max, counts are summed.
+        vla_metrics = {}
+        if _vla_step_stats:
+            _MEAN_KEYS = [
+                "vla/robot_action_l2_mean", "vla/model_output_l2_mean",
+                "vla/image_pixel_mean",
+            ]
+            _MAX_KEYS = [
+                "vla/robot_action_l2_max", "vla/robot_action_abs_max",
+                "vla/model_output_l2_max", "vla/model_output_abs_max",
+                "vla/image_pixel_max",
+            ]
+            _SUM_KEYS = [
+                "vla/robot_action_nan_count", "vla/robot_action_inf_count",
+                "vla/model_output_nan_count", "vla/model_output_inf_count",
+                "vla/image_nan_count",
+            ]
+            for key in _MEAN_KEYS:
+                vals = [s[key] for s in _vla_step_stats if key in s]
+                if vals:
+                    vla_metrics[key] = float(np.mean(vals))
+            for key in _MAX_KEYS:
+                vals = [s[key] for s in _vla_step_stats if key in s]
+                if vals:
+                    vla_metrics[key] = float(np.max(vals))
+            for key in _SUM_KEYS:
+                vals = [s[key] for s in _vla_step_stats if key in s]
+                if vals:
+                    vla_metrics[key] = float(np.sum(vals))
+            # Total inner steps across all outer steps
+            inner_vals = [s.get("vla/n_inner_steps", 0) for s in _vla_step_stats]
+            vla_metrics["vla/total_inner_steps"] = float(sum(inner_vals))
+
+        return total_batch_list, episode_lengths, success, traj_uid, traj_cot_logs, vla_metrics
     
     def multi_turn_loop(
             self,
@@ -468,16 +508,16 @@ class TrajectoryCollector:
         """
         num_attempts = envs.num_attempts
         # Initial observations from the environment
-        total_batch_list, total_episode_lengths, total_success, total_traj_uid, traj_cot_logs = \
+        total_batch_list, total_episode_lengths, total_success, total_traj_uid, traj_cot_logs, vla_metrics = \
             self.vanilla_multi_turn_loop(
             gen_batch=gen_batch,
             actor_rollout_wg=actor_rollout_wg,
             envs=envs,
-        )        
+        )
 
         assert len(total_batch_list) == len(total_episode_lengths)
         assert len(total_batch_list) == len(total_traj_uid)
-        
+
         total_episode_rewards, total_discounted_returns = self.credit_assignment(total_batch_list, num_attempts, self.step_gamma, self.traj_gamma)
 
         # Create trajectory data
@@ -489,6 +529,12 @@ class TrajectoryCollector:
             success=total_success,
             traj_uid=total_traj_uid,
         )
+
+        # Attach VLA health metrics so the trainer can log them to wandb
+        if vla_metrics:
+            if gen_batch_output.meta_info is None:
+                gen_batch_output.meta_info = {}
+            gen_batch_output.meta_info["vla_metrics"] = vla_metrics
 
         print('rollout finihsed')
         if is_train:
