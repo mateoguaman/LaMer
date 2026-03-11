@@ -1,7 +1,5 @@
 set -x
 ENGINE=${1:-vllm}
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # ---- Smoketest: minimal sizes to exercise the full pipeline in ~1 epoch ----
 # Reduce everything that doesn't change code paths:
@@ -17,9 +15,9 @@ val_data_size=16
 group_size=1
 nav_n=4   # 4-step path, 9×9 open grid — small enough for fast resets
 
-save_dir=${SAVE_DIR:-$REPO_ROOT}
+save_dir=/gpfs/scrubbed/memmelma/projects/LaMer
 
-experiment_name=nav_lamer_smoketest
+experiment_name=nav_lamer_smoketest_single
 
 python3 -m examples.data_preprocess.prepare \
     --mode 'text' \
@@ -75,20 +73,20 @@ python3 -m verl.trainer.main_ppo \
     algorithm.gigpo.step_advantage_w=1.0 \
     algorithm.gigpo.mode=mean_norm \
     reward_model.reward_manager=episode \
-    env.env_name=Navigation \
+    env.env_name=NavigationSingle \
     env.seed=42 \
     env.rollout.n=$group_size \
     env.navigation.n=$nav_n \
     "+env.navigation.train_disturbances=[FlipLeftRight,FlipUpDown,FlipBoth,RotateActions]" \
     "+env.navigation.val_disturbances=[FlipLeftRight,FlipUpDown,FlipBoth,RotateActions]" \
     env.num_attempts=3 \
-    env.max_steps=1 \
+    env.max_steps=7 \
     env.max_turns=1 \
-    +env.reflection_type=history_and_reflection \
+    +env.reflection_type=reflection_only \
     trainer.critic_warmup=0 \
     trainer.logger=['console'] \
     trainer.project_name='lamer_smoketest' \
-    trainer.experiment_name=nav_smoketest \
+    trainer.experiment_name=nav_smoketest_single \
     trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=1 \

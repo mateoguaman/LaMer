@@ -70,6 +70,20 @@ class TaskRunner:
                 from agent_system.environments.remote import RemoteEnvironmentManager
                 envs = RemoteEnvironmentManager(config.env.remote_address)
                 val_envs = RemoteEnvironmentManager(config.env.remote_val_address)
+        if 'sokoban' in config.env.env_name.lower():
+            from agent_system.environments.sokoban import make_envs
+        elif 'minesweeper' in config.env.env_name.lower():
+            from agent_system.environments.minesweeper import make_envs
+        elif 'maze' in config.env.env_name.lower():
+            from agent_system.environments.maze import make_envs
+        elif 'navigationsingle' in config.env.env_name.lower():
+            from agent_system.environments.navigation_single import make_envs
+        elif 'navigation' in config.env.env_name.lower():
+            from agent_system.environments.navigation import make_envs
+        elif 'alfworld' in config.env.env_name.lower():
+            from agent_system.environments.alfworld.env_manager import make_envs
+        elif 'webshop' in config.env.env_name.lower():
+            from agent_system.environments.webshop.env_manager import make_envs
         else:
             if 'sokoban' in config.env.env_name.lower():
                 from agent_system.environments.sokoban import make_envs
