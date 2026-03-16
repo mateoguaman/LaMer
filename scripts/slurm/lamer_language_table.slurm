@@ -4,7 +4,7 @@
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:5
+#SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=800G
 #SBATCH --time=24:00:00
@@ -32,13 +32,13 @@ if [ -z "${CHECKPOINT_ROOT}" ]; then
     exit 1
 fi
 RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d-%H%M%S)}"
-TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}/${RUN_ID}"
+TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}"
 RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${RUN_ID}.log"
 
 TRAIN_PORT=50051
 VAL_PORT=50052
-TRAIN_NUM_ENVS=16
-VAL_NUM_ENVS=128
+TRAIN_NUM_ENVS=8 # 16
+VAL_NUM_ENVS=8 # 128
 GROUP_SIZE=8
 BLOCK_MODE="BLOCK_4"
 MAX_INNER_STEPS=100
@@ -55,7 +55,9 @@ fi
 ######################
 ### Setup ############
 ######################
-module load conda/Miniforge3-25.3.1-3
+if [ -z "${CONDA_PREFIX:-}" ]; then
+    module load conda/Miniforge3-25.3.1-3
+fi
 module load gcc/13.4.0
 module load cmake/3.31.8
 
@@ -104,8 +106,10 @@ export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
 
 # GPU isolation: env servers (JAX/LAVA) on GPU 0, LaMer training on GPUs 1-4.
 # Without this, JAX preallocates most of GPU memory before training starts → OOM.
-ENV_SERVER_GPU=0
-TRAIN_GPUS="1,2,3,4"
+# ENV_SERVER_GPU=0
+# TRAIN_GPUS="1,2,3,4"
+ENV_SERVER_GPU=-1
+TRAIN_GPUS="0,1,2,3"
 
 ########################################
 ### Step 0: Download VLA checkpoint ####
@@ -130,7 +134,8 @@ if [ -n "${VLA_CHECKPOINT}" ] && [ -f "${VLA_CHECKPOINT}" ]; then
     VLA_FLAG="--vla_checkpoint ${VLA_CHECKPOINT}"
     echo "VLA enabled: ${VLA_CHECKPOINT}"
 else
-    echo "WARNING: No VLA checkpoint found at '${VLA_CHECKPOINT}' — using random actions"
+    echo "WARNING: No VLA checkpoint found at '${VLA_CHECKPOINT}' — using Gemini policy"
+    VLA_FLAG="--policy gemini"
 fi
 
 # Training server (background)
@@ -145,6 +150,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
+    --reward_type point2block \
     ${VLA_FLAG} \
     &
 TRAIN_SERVER_PID=$!
@@ -161,18 +167,42 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
+    --reward_type point2block \
     ${VLA_FLAG} \
     &
 VAL_SERVER_PID=$!
 echo "Validation server PID: ${VAL_SERVER_PID}"
 
-# Cleanup servers on exit (SIGTERM, SIGINT, or script end)
+RECEIVED_SIGNAL=""
+MEM_MONITOR_PID=""
+
+handle_signal() {
+    RECEIVED_SIGNAL="$1"
+    echo "[$(date)] Received signal: ${RECEIVED_SIGNAL}"
+    echo "[$(date)] System memory at signal time:"
+    free -h 2>/dev/null || true
+    echo "[$(date)] GPU memory at signal time:"
+    nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader 2>/dev/null || true
+    echo "[$(date)] Process tree:"
+    ps -o pid,ppid,rss,vsz,stat,comm --forest -g $$ 2>/dev/null || true
+}
+
 cleanup() {
+    local exit_code=$?
+    echo "[$(date)] cleanup() called — exit_code=${exit_code}, signal=${RECEIVED_SIGNAL:-none}"
+    [ -n "${MEM_MONITOR_PID}" ] && kill ${MEM_MONITOR_PID} 2>/dev/null || true
     echo "Cleaning up env servers..."
     kill ${TRAIN_SERVER_PID} ${VAL_SERVER_PID} 2>/dev/null || true
     wait ${TRAIN_SERVER_PID} ${VAL_SERVER_PID} 2>/dev/null || true
     echo "Servers stopped."
+    if [ -n "${RECEIVED_SIGNAL}" ]; then
+        echo "[$(date)] Job terminated by signal: ${RECEIVED_SIGNAL}"
+        exit 1
+    fi
 }
+
+trap 'handle_signal SIGTERM' TERM
+trap 'handle_signal SIGINT' INT
 trap cleanup EXIT
 
 ########################################
@@ -210,6 +240,20 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.test_connection \
 echo "Connection test passed!"
 
 ########################################
+### Memory monitor (background) ########
+########################################
+monitor_memory() {
+    while true; do
+        echo "[$(date)] [mem-monitor] $(free -h 2>/dev/null | grep Mem || echo 'N/A')"
+        nvidia-smi --query-gpu=index,memory.used,memory.total,utilization.gpu \
+            --format=csv,noheader 2>/dev/null || true
+        sleep 300
+    done
+}
+monitor_memory &
+MEM_MONITOR_PID=$!
+
+########################################
 ### Step 4: LaMer training #############
 ########################################
 echo ""
@@ -228,6 +272,18 @@ export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
 export ENV_ADDRESS="127.0.0.1:${TRAIN_PORT}"
 export VAL_ADDRESS="127.0.0.1:${VAL_PORT}"
 
+set +e
 bash "${LAMER_DIR}/examples/language_table/lamer_language_table_slurm.sh"
+TRAIN_EXIT_CODE=$?
+set -e
+
+if [ ${TRAIN_EXIT_CODE} -ne 0 ]; then
+    echo "[$(date)] ERROR: Training exited with code ${TRAIN_EXIT_CODE}"
+    echo "[$(date)] System memory at failure:"
+    free -h 2>/dev/null || true
+    echo "[$(date)] GPU memory at failure:"
+    nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader 2>/dev/null || true
+    exit ${TRAIN_EXIT_CODE}
+fi
 
 echo "END TIME: $(date)"

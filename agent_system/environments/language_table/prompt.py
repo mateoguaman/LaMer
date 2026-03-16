@@ -1,31 +1,54 @@
 ##### LANGUAGE TABLE PROMPT TEMPLATES FOR METARL #####
 
+# Each command specifies a direction and distance (e.g., "move up by 0.1, then move right by 0.05").
+
 LANGUAGE_TABLE_PLAY_PROMPT = """You are an expert robot control agent operating a tabletop manipulation environment.
 
 # Environment
-A robot end-effector can push objects on a table. You observe the task instruction, the end-effector position, and the positions of colored blocks on the table.
+A robot end-effector can push objects on a table. You observe the task instruction,
+the end-effector position, and the positions of colored blocks on the table.
+Coordinates are (x, y) where x increases rightward and y increases upward.
 
 # Your Job
-Read the observation and output a **short natural-language goal** that tells the robot what to do. The goal should be a simple imperative sentence describing the desired movement (e.g., "push the red star to the blue cube").
+Read the observation and output a **sequence of movement commands** in natural
+language that tell the end-effector where to move. The movements are executed open-loop — you will not see intermediate states.
+
+# Important: Adversarial Environment
+This environment may be adversarial. The actual effect of your movement commands
+might not match what you intend. This disturbance is deterministic for the
+entire environment instance.
+By observing the outcomes of your actions across multiple attempts, you can deduce
+the true mapping and adapt your strategy accordingly.
 
 # Observations
 {init_observation}{past_trajectories_reflections}{current_trajectory}
 
 # Output Format
-- You may first reason briefly about which objects to move and where.
-- Then output your goal inside <action> </action> tags.
-- The goal must be a short, clear sentence (under 20 words).
+- First, reason step-by-step: identify the task, locate relevant objects, and
+  plan the end-effector movements needed. If you have prior attempts, reason
+  about how your movements actually affected the end-effector versus what you
+  expected, to infer whether a disturbance is present.
+- Then output your movement commands inside <action> </action> tags.
 
-Example: <action>push the red star to the blue cube</action>
+Example: <action>move right by 0.1, then move up by 0.2, then move left by 0.15, then move down by 0.1</action>
+
 """
 
 LANGUAGE_TABLE_REFLECT_PROMPT = """You are an expert robot control agent operating a tabletop manipulation environment.
 
 # Environment
-A robot end-effector can push objects on a table. You observe the task instruction, the end-effector position, and the positions of colored blocks on the table.
+A robot end-effector can push objects on a table. You observe the task instruction,
+the end-effector position, and the positions of colored blocks on the table.
+Coordinates are (x, y) where x increases rightward and y increases upward.
+
+# Important: Adversarial Environment
+This environment may be adversarial. The actual effect of your movement commands
+might not match what you intend. This disturbance is deterministic for the
+entire environment instance.
 
 # Your Task
-You will be given the history of a past attempt. Reflect on what went wrong and propose an improved goal for the next attempt.
+You will be given the history of a past failed attempt. Reflect on what went
+wrong and propose improved movement commands for the next attempt.
 
 # Past Experience
 {init_observation}
@@ -33,22 +56,25 @@ You will be given the history of a past attempt. Reflect on what went wrong and 
 The task was NOT successfully completed.
 
 # Output Format
-- First, briefly analyze what went wrong in the previous attempt.
-- Then provide your reflection inside <remark> </remark> tags to guide the next trial.
+- Reason step-by-step about which movements were wrong and why.
+- Identify whether the movement effects matched your expectations or appeared
+  distorted. If you detected a disturbance, describe it explicitly.
+- Propose a corrected plan using your updated understanding.
+- End with your reflection inside <remark> </remark> tags to guide the next trial.
 """
 
 # Prompt templates for parsing past trajectories and reflections
 PAST_TRAJECTORY_AND_REFLECTION_TEMPLATE = """
-On attempt #{traj_idx}, you issued the goal: {past_trajectory}
-The task was NOT successfully completed. Your reflection is:
+On attempt #{traj_idx}, you issued the movement commands: {past_trajectory}
+The task was NOT successfully completed. Your reflection was:
 {reflection}"""
 
 HISTORY_ONLY_TEMPLATE = """
-On attempt #{traj_idx}, you issued the goal: {past_trajectory}
+On attempt #{traj_idx}, you issued the movement commands: {past_trajectory}
 The task was NOT successfully completed."""
 
 REFLECTION_ONLY_TEMPLATE = """
-On attempt #{traj_idx}, the task was NOT successfully completed. Your reflection is:
+On attempt #{traj_idx}, the task was NOT successfully completed. Your reflection was:
 {reflection}"""
 
 
@@ -81,11 +107,11 @@ def parse_reflection(traj_idx, past_traj, reflection, reflection_type):
 
 
 CURR_TRAJ_AT_TRAJ1 = """
-You previously issued the goal: {current_trajectory}
+You previously issued the movement commands: {current_trajectory}
 """
 
 CURR_TRAJ_AT_TRAJ2toN = """
-Currently you're on attempt #{traj_idx}. You previously issued the goal: {current_trajectory}
+Currently you're on attempt #{traj_idx}. You previously issued the movement commands: {current_trajectory}
 """
 
 TRAJ_2toN_INIT = """

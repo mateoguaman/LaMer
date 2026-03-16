@@ -37,6 +37,7 @@ export WANDB_DATA_DIR="${WANDB_DATA_DIR:-}"
 export WANDB_USERNAME="${WANDB_USERNAME:-}"
 export WANDB_API_KEY="${WANDB_API_KEY:-}"
 export HF_TOKEN="${HF_TOKEN:-}"
+export GOOGLE_API_KEY="${GOOGLE_API_KEY:-}"
 
 if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "ERROR: CHECKPOINT_ROOT is not set."
