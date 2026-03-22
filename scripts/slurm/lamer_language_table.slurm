@@ -26,6 +26,7 @@ TRAIN_DATA_PATH="$HOME/data/verl-agent/text/train.parquet"
 VAL_DATA_PATH="$HOME/data/verl-agent/text/test.parquet"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-}"
 RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
+REWARD_TYPE="${REWARD_TYPE:-block2block}"
 if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "ERROR: CHECKPOINT_ROOT is not set."
     echo "Set CHECKPOINT_ROOT in .env.language_table before submitting."
@@ -37,13 +38,13 @@ RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${RUN_ID}.log"
 
 TRAIN_PORT=50051
 VAL_PORT=50052
-TRAIN_NUM_ENVS=8 # 16
-VAL_NUM_ENVS=8 # 128
+TRAIN_NUM_ENVS=16
+VAL_NUM_ENVS=4
 GROUP_SIZE=8
 BLOCK_MODE="BLOCK_4"
 MAX_INNER_STEPS=100
 NUM_ATTEMPTS=3
-MAX_TURNS=1
+MAX_TURNS=3
 
 # VLA (inner-loop policy) — set to "" to use random actions
 VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
@@ -94,6 +95,11 @@ fi
 export HF_HUB_ETAG_TIMEOUT=60
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+
+# Suppress noisy framework warnings that clutter logs
+export TF_CPP_MIN_LOG_LEVEL=2
+export GRPC_VERBOSITY=ERROR
+export JAX_PLATFORMS=cpu
 mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")"
 [ -n "${CONDA_PKGS_DIRS:-}" ] && mkdir -p "${CONDA_PKGS_DIRS}"
 [ -n "${PIP_CACHE_DIR:-}" ] && mkdir -p "${PIP_CACHE_DIR}"
@@ -150,7 +156,8 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
-    --reward_type point2block \
+    --reward_type ${REWARD_TYPE} \
+    --split train \
     ${VLA_FLAG} \
     &
 TRAIN_SERVER_PID=$!
@@ -167,7 +174,8 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
-    --reward_type point2block \
+    --reward_type ${REWARD_TYPE} \
+    --split val \
     ${VLA_FLAG} \
     &
 VAL_SERVER_PID=$!
