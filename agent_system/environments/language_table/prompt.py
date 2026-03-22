@@ -2,65 +2,92 @@
 
 # Each command specifies a direction and distance (e.g., "move up by 0.1, then move right by 0.05").
 
-LANGUAGE_TABLE_PLAY_PROMPT = """You are an expert robot control agent operating a tabletop manipulation environment.
+# LANGUAGE_TABLE_PLAY_PROMPT = """You are an expert robot control agent operating a tabletop manipulation environment.
 
-# Environment
-A robot end-effector can push objects on a table. You observe the task instruction,
-the end-effector position, and the positions of colored blocks on the table.
-Coordinates are (x, y) where x increases rightward and y increases upward.
+# # Environment
+# A robot end-effector can push objects on a table. You observe the task instruction,
+# the end-effector position, and the positions of colored blocks on the table.
+# Coordinates are (x, y) where x increases rightward and y increases upward.
 
-# Your Job
-Read the observation and output a **sequence of movement commands** in natural
-language that tell the end-effector where to move. The movements are executed open-loop — you will not see intermediate states.
+# # Your Job
+# Read the observation and output a **sequence of movement commands** in natural
+# language that tell the end-effector where to move. The movements are executed open-loop — you will not see intermediate states.
 
-# Important: Adversarial Environment
-This environment may be adversarial. The actual effect of your movement commands
-might not match what you intend. This disturbance is deterministic for the
-entire environment instance.
-By observing the outcomes of your actions across multiple attempts, you can deduce
-the true mapping and adapt your strategy accordingly.
+# # Important: Adversarial Environment
+# This environment may be adversarial. The actual effect of your movement commands
+# might not match what you intend. This disturbance is deterministic for the
+# entire environment instance.
+# By observing the outcomes of your actions across multiple attempts, you can deduce
+# the true mapping and adapt your strategy accordingly.
 
-# Observations
+# # Important: Partially Observability
+# You don't know which actions the environment responds to. You need to explore the environment to figure out which actions are effective. You can try rephrasing or breaking down the task into smaller subtasks.
+
+# # Observations
+# {init_observation}{past_trajectories_reflections}{current_trajectory}
+
+# # Output Format
+# - First, reason step-by-step: identify the task, locate relevant objects, and
+#   plan the end-effector movements needed. If you have prior attempts, reason
+#   about how your movements actually affected the end-effector versus what you
+#   expected, to infer whether a disturbance is present.
+# - Then output your movement commands inside <action> </action> tags.
+
+# """
+LANGUAGE_TABLE_PLAY_PROMPT = """You control a robot end-effector that pushes colored blocks on a table.
+Coordinates: (x, y), x=right, y=up.
+
+The environment may be adversarial — commands may not produce intended effects. The disturbance is deterministic; learn from prior attempts. You must also discover which actions the environment responds to.
+
 {init_observation}{past_trajectories_reflections}{current_trajectory}
 
-# Output Format
-- First, reason step-by-step: identify the task, locate relevant objects, and
-  plan the end-effector movements needed. If you have prior attempts, reason
-  about how your movements actually affected the end-effector versus what you
-  expected, to infer whether a disturbance is present.
-- Then output your movement commands inside <action> </action> tags.
-
-Example: <action>move right by 0.1, then move up by 0.2, then move left by 0.15, then move down by 0.1</action>
-
+Reason step-by-step, then output commands in <action> </action> tags.
 """
 
-LANGUAGE_TABLE_REFLECT_PROMPT = """You are an expert robot control agent operating a tabletop manipulation environment.
+# LANGUAGE_TABLE_REFLECT_PROMPT = """You are an expert robot control agent operating a tabletop manipulation environment.
 
-# Environment
-A robot end-effector can push objects on a table. You observe the task instruction,
-the end-effector position, and the positions of colored blocks on the table.
-Coordinates are (x, y) where x increases rightward and y increases upward.
+# # Environment
+# A robot end-effector can push objects on a table. You observe the task instruction,
+# the end-effector position, and the positions of colored blocks on the table.
+# Coordinates are (x, y) where x increases rightward and y increases upward.
 
-# Important: Adversarial Environment
-This environment may be adversarial. The actual effect of your movement commands
-might not match what you intend. This disturbance is deterministic for the
-entire environment instance.
+# # Important: Adversarial Environment
+# This environment may be adversarial. The actual effect of your movement commands
+# might not match what you intend. This disturbance is deterministic for the
+# entire environment instance.
+# By observing the outcomes of your actions across multiple attempts, you can deduce
+# the true mapping and adapt your strategy accordingly.
 
-# Your Task
-You will be given the history of a past failed attempt. Reflect on what went
-wrong and propose improved movement commands for the next attempt.
+# # Important: Partially Observability
+# You don't know which actions the environment responds to. You need to explore the environment to figure out which actions are effective. You can try rephrasing or breaking down the task into smaller subtasks.
 
-# Past Experience
+# # Your Task
+# You will be given the history of a past failed attempt. Reflect on what went
+# wrong and propose improved movement commands for the next attempt.
+
+# # Past Experience
+# {init_observation}
+# {current_trajectory}
+# The task was NOT successfully completed.
+
+# # Output Format
+# - Reason step-by-step about which movements were wrong and why.
+# - Identify whether the movement effects matched your expectations or appeared
+#   distorted. If you detected a disturbance, describe it explicitly.
+# - Propose a corrected plan using your updated understanding.
+# - End with your reflection inside <remark> </remark> tags to guide the next trial.
+# """
+
+LANGUAGE_TABLE_REFLECT_PROMPT = """You control a robot end-effector that pushes colored blocks on a table.
+Coordinates: (x, y), x=right, y=up.
+
+The environment may be adversarial — commands may not produce intended effects. The disturbance is deterministic; learn from prior attempts. You must also discover which actions the environment responds to.
+
 {init_observation}
 {current_trajectory}
-The task was NOT successfully completed.
+The task FAILED.
 
-# Output Format
-- Reason step-by-step about which movements were wrong and why.
-- Identify whether the movement effects matched your expectations or appeared
-  distorted. If you detected a disturbance, describe it explicitly.
-- Propose a corrected plan using your updated understanding.
-- End with your reflection inside <remark> </remark> tags to guide the next trial.
+Analyze which movements were wrong and whether a disturbance is present. Output corrected plan in <remark> </remark> tags.
 """
 
 # Prompt templates for parsing past trajectories and reflections
