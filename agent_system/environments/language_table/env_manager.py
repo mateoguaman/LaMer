@@ -158,6 +158,10 @@ class LanguageTableEnvironmentManager:
 
         for i, info in enumerate(infos):
             info["is_action_valid"] = np.array(valids[i], dtype=np.float32)
+            # The remote server may not set 'won'; derive it from the reward
+            # signal (reward >= 100 indicates task success).
+            if "won" not in info:
+                info["won"] = bool(float(rewards[i]) >= 100.0)
 
         text_obs = obs.get("text", [""] * self.num_processes)
         self._last_text_obs = (
