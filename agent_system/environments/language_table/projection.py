@@ -1,5 +1,9 @@
 import copy
+import logging
+import re
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 
 def language_table_projection(actions: List[str], phase="play"):
@@ -23,13 +27,16 @@ def language_table_projection(actions: List[str], phase="play"):
         for i in range(len(actions)):
             text = actions[i]
 
-            start_tag = "<action>"
-            end_tag = "</action>"
-            start_idx = text.find(start_tag)
-            end_idx = text.rfind(end_tag)
-
-            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                extracted = text[start_idx + len(start_tag):end_idx].strip()
+            # Use non-greedy regex to find all complete <action>...</action>
+            # pairs, then take the last one.  This avoids the old find/rfind
+            # bug where multiple action blocks caused everything between the
+            # first opening and last closing tag to be captured (including
+            # chain-of-thought reasoning leaked between blocks).
+            matches = re.findall(
+                r"<action>(.*?)</action>", text, re.DOTALL
+            )
+            if matches:
+                extracted = matches[-1].strip()
                 if extracted:
                     goals[i] = extracted
                     valids[i] = 1
@@ -51,6 +58,11 @@ def language_table_projection(actions: List[str], phase="play"):
                         goals[i] = last_line
                         # Still mark as invalid so the penalty applies
                         valids[i] = 0
+
+            logger.warning(
+                "Projection env=%d phase=play valid=%d raw=%r goal=%r",
+                i, valids[i], text, goals[i],
+            )
 
         return goals, valids
 
