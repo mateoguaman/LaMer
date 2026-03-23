@@ -43,7 +43,7 @@ class LanguageTableEnvironmentManager:
         # Per-env tracking
         self._init_text_obs: List[str] = [""] * self.num_processes
         self._last_text_obs: List[str] = [""] * self.num_processes
-        self._last_goals: List[Dict[int, str]] = [
+        self._last_goals: List[Dict[int, Dict[int, str]]] = [
             {} for _ in range(self.num_processes)
         ]
         self.reflections: List[Dict] = [{} for _ in range(self.num_processes)]
@@ -149,9 +149,11 @@ class LanguageTableEnvironmentManager:
         """Extract goal from LLM output, forward to remote server."""
         goals, valids = language_table_projection(text_actions, phase="play")
 
-        # Track goals for history
+        # Track goals for history (keyed by attempt, then turn)
         for i, goal in enumerate(goals):
-            self._last_goals[i][self.curr_turn_idx] = goal
+            if self.curr_traj_idx not in self._last_goals[i]:
+                self._last_goals[i][self.curr_traj_idx] = {}
+            self._last_goals[i][self.curr_traj_idx][self.curr_turn_idx] = goal
 
         # Forward extracted goals (not raw LLM output) to the remote server
         obs, rewards, dones, infos = self._remote.step(goals, phase="play")
@@ -166,7 +168,7 @@ class LanguageTableEnvironmentManager:
         self.curr_turn_idx += 1
 
         observations = {
-            "text": self._build_play_prompts(),
+            "text": self._build_play_prompts() if self.curr_turn_idx < self.max_turns else [""] * self.num_processes,
             "image": obs.get("image"),
             "anchor": text_obs,
         }
@@ -206,25 +208,20 @@ class LanguageTableEnvironmentManager:
         """Build structured play prompts for each environment."""
         prompts = []
         for i in range(self.num_processes):
-            # Build current trajectory string from tracked goals
+            # Build current trajectory string from this attempt's goals
             if self.curr_turn_idx == 0:
                 curr_traj = ""
             else:
-                goal_parts = []
-                for t in range(self.curr_turn_idx):
-                    goal = self._last_goals[i].get(t, "")
-                    if goal:
-                        goal_parts.append(goal)
+                current_goals = self._last_goals[i].get(self.curr_traj_idx, {})
+                goal_parts = [current_goals[t] for t in range(self.curr_turn_idx) if current_goals.get(t)]
                 curr_traj = "; ".join(goal_parts) if goal_parts else ""
 
-            # Build past trajectory dict
+            # Build past trajectory dict: join each past attempt's goals
             past_traj = {}
             for traj_idx in range(self.curr_traj_idx):
-                goals_in_traj = self._last_goals[i].get(traj_idx)
-                if isinstance(goals_in_traj, str):
-                    past_traj[traj_idx] = goals_in_traj
-                else:
-                    past_traj[traj_idx] = ""
+                past_goals = self._last_goals[i].get(traj_idx, {})
+                parts = [past_goals[t] for t in sorted(past_goals) if past_goals[t]]
+                past_traj[traj_idx] = "; ".join(parts) if parts else ""
 
             prompt = get_language_table_prompt(
                 phase="play",
@@ -244,17 +241,14 @@ class LanguageTableEnvironmentManager:
         """Build structured reflect prompts for each environment."""
         prompts = []
         for i in range(self.num_processes):
-            # Build current trajectory from tracked goals
-            goal_parts = []
-            for t in range(self.curr_turn_idx):
-                goal = self._last_goals[i].get(t, "")
-                if goal:
-                    goal_parts.append(goal)
+            # Build current trajectory from this attempt's goals
+            current_goals = self._last_goals[i].get(self.curr_traj_idx, {})
+            goal_parts = [current_goals[t] for t in range(self.curr_turn_idx) if current_goals.get(t)]
             curr_traj = "; ".join(goal_parts) if goal_parts else ""
 
             prompt = get_language_table_prompt(
                 phase="reflect",
-                turn_idx=self.curr_turn_idx,
+                turn_idx=min(self.curr_turn_idx, self.max_turns - 1),
                 traj_idx=self.curr_traj_idx,
                 max_turns=self.max_turns,
                 init_observation=self._init_text_obs[i],
