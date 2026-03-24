@@ -11,3 +11,4 @@ lamer-*.err
 .env.azure
 .env.azure.secrets
 logs/
+checkpoints/

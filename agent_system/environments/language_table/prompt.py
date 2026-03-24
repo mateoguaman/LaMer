@@ -1,54 +1,38 @@
-##### LANGUAGE TABLE PROMPT TEMPLATES FOR METARL #####
+# NOTE: "conclude" is important, so the agent puts the action at the end of the response!
+LANGUAGE_TABLE_PLAY_PROMPT = """You control a robot end-effector that pushes colored blocks on a table by instructing it with short natural language commands.
+Coordinates: (x, y), x=right, y=up.
 
-LANGUAGE_TABLE_PLAY_PROMPT = """You are an expert robot control agent operating a tabletop manipulation environment.
+The environment may be adversarial - commands may not produce intended effects. The environment is deterministic - learn from prior attempts to discover which actions the environment responds to. To get you started, try rewording, decomposing, or restructuring the commands to make it more effective.
 
-# Environment
-A robot end-effector can push objects on a table. You observe the task instruction, the end-effector position, and the positions of colored blocks on the table.
-
-# Your Job
-Read the observation and output a **short natural-language goal** that tells the robot what to do. The goal should be a simple imperative sentence describing the desired movement (e.g., "push the red star to the blue cube").
-
-# Observations
 {init_observation}{past_trajectories_reflections}{current_trajectory}
 
-# Output Format
-- You may first reason briefly about which objects to move and where.
-- Then output your goal inside <action> </action> tags.
-- The goal must be a short, clear sentence (under 20 words).
-
-Example: <action>push the red star to the blue cube</action>
+Reason step-by-step, then conclude with your command in <action> </action> tags.
 """
 
-LANGUAGE_TABLE_REFLECT_PROMPT = """You are an expert robot control agent operating a tabletop manipulation environment.
+LANGUAGE_TABLE_REFLECT_PROMPT = """You control a robot end-effector that pushes colored blocks on a table by instructing it with short natural language commands.
+Coordinates: (x, y), x=right, y=up.
 
-# Environment
-A robot end-effector can push objects on a table. You observe the task instruction, the end-effector position, and the positions of colored blocks on the table.
+The environment may be adversarial - commands may not produce intended effects. The environment is deterministic - learn from prior attempts to discover which actions the environment responds to. To get you started, try rewording, decomposing, or restructuring the commands to make it more effective.
 
-# Your Task
-You will be given the history of a past attempt. Reflect on what went wrong and propose an improved goal for the next attempt.
-
-# Past Experience
 {init_observation}
 {current_trajectory}
-The task was NOT successfully completed.
+The task FAILED.
 
-# Output Format
-- First, briefly analyze what went wrong in the previous attempt.
-- Then provide your reflection inside <remark> </remark> tags to guide the next trial.
+Reason step-by-step, to analyze the outcomes of your previous commands and whether a disturbance is present. Conclude with your reflection inside <remark> </remark> tags to guide the next trial.
 """
 
 # Prompt templates for parsing past trajectories and reflections
 PAST_TRAJECTORY_AND_REFLECTION_TEMPLATE = """
-On attempt #{traj_idx}, you issued the goal: {past_trajectory}
-The task was NOT successfully completed. Your reflection is:
+On attempt #{traj_idx}, you issued the movement commands: {past_trajectory}
+The task was NOT successfully completed. Your reflection was:
 {reflection}"""
 
 HISTORY_ONLY_TEMPLATE = """
-On attempt #{traj_idx}, you issued the goal: {past_trajectory}
+On attempt #{traj_idx}, you issued the movement commands: {past_trajectory}
 The task was NOT successfully completed."""
 
 REFLECTION_ONLY_TEMPLATE = """
-On attempt #{traj_idx}, the task was NOT successfully completed. Your reflection is:
+On attempt #{traj_idx}, the task was NOT successfully completed. Your reflection was:
 {reflection}"""
 
 
@@ -80,30 +64,38 @@ def parse_reflection(traj_idx, past_traj, reflection, reflection_type):
         return "".join(memories)
 
 
+TRAJ_1_INIT = """
+You're on step {turn_idx}/{max_turns}."""
+
 CURR_TRAJ_AT_TRAJ1 = """
-You previously issued the goal: {current_trajectory}
+You're on step {turn_idx}/{max_turns}. You previously issued the movement commands: {current_trajectory}
 """
 
 CURR_TRAJ_AT_TRAJ2toN = """
-Currently you're on attempt #{traj_idx}. You previously issued the goal: {current_trajectory}
+Currently you're on attempt #{traj_idx}. You're on step {turn_idx}/{max_turns}. You previously issued the movement commands: {current_trajectory}
 """
 
 TRAJ_2toN_INIT = """
-Currently you're on attempt #{traj_idx}, starting fresh."""
+Currently you're on attempt #{traj_idx}, starting fresh. You're on step {turn_idx}/{max_turns}."""
 
 
-def parse_current_trajectory(turn_idx, traj_idx, curr_traj):
+def parse_current_trajectory(turn_idx, traj_idx, curr_traj, max_turns):
     if traj_idx == 0:
         if turn_idx == 0:
-            return ""
+            return TRAJ_1_INIT.format(turn_idx=turn_idx + 1, max_turns=max_turns)
         else:
-            return CURR_TRAJ_AT_TRAJ1.format(current_trajectory=curr_traj)
+            return CURR_TRAJ_AT_TRAJ1.format(
+                turn_idx=turn_idx + 1, max_turns=max_turns,
+                current_trajectory=curr_traj,
+            )
     else:
         if turn_idx == 0:
-            return TRAJ_2toN_INIT.format(traj_idx=traj_idx + 1)
+            return TRAJ_2toN_INIT.format(
+                traj_idx=traj_idx + 1, turn_idx=turn_idx + 1, max_turns=max_turns,
+            )
         else:
             return CURR_TRAJ_AT_TRAJ2toN.format(
-                traj_idx=traj_idx + 1,
+                traj_idx=traj_idx + 1, turn_idx=turn_idx + 1, max_turns=max_turns,
                 current_trajectory=curr_traj,
             )
 
@@ -112,6 +104,7 @@ def get_language_table_prompt(
     phase: str = "play",
     turn_idx: int = 0,
     traj_idx: int = 0,
+    max_turns: int = 1,
     init_observation: str = "",
     curr_traj: str = "",
     past_traj: dict = {},
@@ -124,14 +117,14 @@ def get_language_table_prompt(
         past_trajectories_reflections = parse_reflection(
             traj_idx, past_traj, reflection, reflection_type
         )
-        current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj)
+        current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj, max_turns)
         prompt = LANGUAGE_TABLE_PLAY_PROMPT.format(
             init_observation=init_observation,
             past_trajectories_reflections=past_trajectories_reflections,
             current_trajectory=current_trajectory,
         )
     else:
-        current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj)
+        current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj, max_turns)
         prompt = LANGUAGE_TABLE_REFLECT_PROMPT.format(
             init_observation=init_observation,
             current_trajectory=current_trajectory,

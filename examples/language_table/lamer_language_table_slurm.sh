@@ -1,4 +1,4 @@
-set -x
+set -eo pipefail
 
 # Tillicum/SLURM: 1 node x 4 training GPUs (GPU 0 reserved for env servers).
 # Env servers run on localhost (same node).
@@ -12,7 +12,7 @@ train_data_size=${TRAIN_NUM_ENVS:-16}
 val_data_size=${VAL_NUM_ENVS:-128}
 group_size=${GROUP_SIZE:-8}
 mode="mean_norm"
-reflection_type="reflection_only"
+reflection_type="history_and_reflection"
 
 env_address="${ENV_ADDRESS:-127.0.0.1:50051}"
 val_address="${VAL_ADDRESS:-127.0.0.1:50052}"
@@ -69,7 +69,7 @@ python3 -m verl.trainer.main_ppo \
     +env.remote_val_address=$val_address \
     env.rollout.n=$group_size \
     env.num_attempts=3 \
-    env.max_turns=1 \
+    env.max_turns=3 \
     +env.reflection_type=$reflection_type \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
@@ -82,7 +82,9 @@ python3 -m verl.trainer.main_ppo \
     trainer.test_freq=5 \
     trainer.total_epochs=300 \
     trainer.val_before_train=True \
-    trainer.log_val_generations=1 \
+    trainer.log_val_generations=$val_data_size \
+    trainer.log_train_generations=$train_data_size \
     trainer.max_actor_ckpt_to_keep=1 \
     trainer.max_critic_ckpt_to_keep=1 \
+    trainer.resume_mode=disable \
     2>&1 | tee -a ${RUN_LOG_PATH:-language_table_slurm.log}

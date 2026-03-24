@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import torch
 import numpy as np
 from verl import DataProto
+
+logger = logging.getLogger(__name__)
 from verl.utils.dataset.rl_dataset import collate_fn
 from verl.utils.model import compute_position_id_with_mask
 import verl.utils.torch_functional as verl_F
@@ -91,7 +94,7 @@ class TrajectoryCollector:
         if obs_text is not None:
             obs_content += obs_text
         else:
-            print(f"Warning: No text observation found!")
+            logger.warning("No text observation found")
 
         
         chat = np.array([{
@@ -344,7 +347,7 @@ class TrajectoryCollector:
                     phase_and_steps += [(attempt_idx, 'reflect', 1)]
                 phase_and_steps += [(attempt_idx, 'play', envs.max_turns)]
 
-        print(phase_and_steps)
+        logger.info("Rollout plan: %s", phase_and_steps)
         for attempt_idx, phase, steps in phase_and_steps:
             if phase == 'reflect':
                 obs, infos = envs.reflect()
@@ -443,7 +446,7 @@ class TrajectoryCollector:
                     break
             
         ##Added: to record the trajectory
-        traj_cot_logs = self.get_traj_cot_logs(total_batch_list, num_attempts)
+        traj_cot_logs = self.get_traj_cot_logs(total_batch_list, num_attempts, total_infos)
         success: Dict[str, np.ndarray] = envs.success_evaluator(
                     total_infos=total_infos,
                     total_batch_list=total_batch_list,
@@ -536,28 +539,43 @@ class TrajectoryCollector:
                 gen_batch_output.meta_info = {}
             gen_batch_output.meta_info["vla_metrics"] = vla_metrics
 
-        print('rollout finihsed')
-        if is_train:
-            return gen_batch_output
-        else: # return trajectory logs in validation set
-            return gen_batch_output, traj_cot_logs
+        logger.info("Rollout finished")
+        return gen_batch_output, traj_cot_logs
 
-    def get_traj_cot_logs(self, total_batch_list, num_attempts):
+    def get_traj_cot_logs(self, total_batch_list, num_attempts, total_infos=None):
         '''
         Collects trajectories in text .
         Parameters:
             total_batch_list (List[List[Dict]): List of trajectory data for each environment
+            num_attempts (int): Number of meta-RL attempts per episode
+            total_infos (List[List[Dict]], optional): Per-step info dicts (parallel to total_batch_list)
         
         Returns:
             traj_cot_logs (List[Dict]): List of trajectory text
         '''
         traj_cot_logs = []
-        for traj_batch in total_batch_list:
+        for bs, traj_batch in enumerate(total_batch_list):
             cot_log = {'reward': [0 for _ in range(num_attempts)], 'trajectory': ''}
             action_idx = 0
             phase = ''
+
+            env_internal_state = {}
+            if total_infos is not None:
+                for info in total_infos[bs]:
+                    for key, val in info.items():
+                        if val is not None:
+                            env_internal_state[key] = val
+
+            cot_log['env_id'] = bs + 1
+            cot_log['env_info'] = str(env_internal_state) if env_internal_state else ''
+            cot_log['won'] = env_internal_state.get('won', False)
+
+            if env_internal_state:
+                cot_log['trajectory'] += "\n#### Environment Internal State ####\n"
+                for key, val in env_internal_state.items():
+                    cot_log['trajectory'] += f"[{key}] {val}\n"
+
             for i, step in enumerate(traj_batch):
-                # ignore system prompt  
                 input_text = self.tokenizer.decode(step['input_ids'], skip_special_tokens=True).replace("You are Qwen, created by Alibaba Cloud. You are a helpful assistant", "").split('assistant')[0]
                 text_action = self.tokenizer.decode(step['responses'], skip_special_tokens=True) 
             

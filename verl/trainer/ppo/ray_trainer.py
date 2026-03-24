@@ -684,36 +684,65 @@ class RayPPOTrainer:
         # Log to each configured logger
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
 
-    def _maybe_log_val_trajectory(self, traj_cot_logs):
-        """ Log validation trajectory """
-        generations_to_log = self.config.trainer.log_val_generations
-            
-        print('#### Trajectory CoT logging ####')
-        for idx in range(generations_to_log):
+    def _maybe_log_train_trajectory(self, traj_cot_logs):
+        """ Log train trajectory """
+        generations_to_log = self.config.trainer.get("log_train_generations", 0)
+        if generations_to_log == 0 or not traj_cot_logs:
+            return
+
+        n = min(generations_to_log, len(traj_cot_logs))
+
+        print('#### Train Trajectory CoT logging ####')
+        for idx in range(n):
             traj_cot_log = traj_cot_logs[idx]
-            # print trajectory
             for k, v in traj_cot_log.items():
                 print(f'\n[{k}]\n{v}')
 
         if 'wandb' in self.config.trainer.logger:
             import wandb
-            ## create wandb tables for traj_cot_log ##
-            columns = ['step'] + list(traj_cot_log.keys())
+            all_keys = ['env_id', 'reward', 'trajectory', 'env_info', 'won']
+            columns = ['step'] + all_keys
 
-            if not hasattr(self, "val_table_traj_cot"):
-               self.val_table_traj_cot = wandb.Table(columns=columns)
-            
-            new_table = wandb.Table(columns=columns, data=self.val_table_traj_cot.data)
-            for idx in range(generations_to_log):
-                # Add new row with all data
+            if not hasattr(self, "_train_traj_rows"):
+                self._train_traj_rows = []
+
+            for idx in range(n):
                 traj_cot_log = traj_cot_logs[idx]
-                row_data = [self.global_steps] + [v for v in traj_cot_log.values()]
-                row_data += [''] * (len(columns) - len(row_data))  # Fill with empty strings if needed
-                new_table.add_data(*row_data)
+                row_data = [self.global_steps] + [str(traj_cot_log.get(k, '')) for k in all_keys]
+                self._train_traj_rows.append(row_data)
 
-            # Update reference and log
-            wandb.log({"val/cot_trajectory": new_table}, step=self.global_steps)
-            self.val_table_traj_cot = new_table
+            table = wandb.Table(columns=columns, data=self._train_traj_rows)
+            wandb.log({"training/cot_trajectory": table}, step=self.global_steps)
+
+    def _maybe_log_val_trajectory(self, traj_cot_logs):
+        """ Log validation trajectory """
+        generations_to_log = self.config.trainer.log_val_generations
+        if generations_to_log == 0 or not traj_cot_logs:
+            return
+
+        n = min(generations_to_log, len(traj_cot_logs))
+
+        print('#### Trajectory CoT logging ####')
+        for idx in range(n):
+            traj_cot_log = traj_cot_logs[idx]
+            for k, v in traj_cot_log.items():
+                print(f'\n[{k}]\n{v}')
+
+        if 'wandb' in self.config.trainer.logger:
+            import wandb
+            all_keys = ['env_id', 'reward', 'trajectory', 'env_info', 'won']
+            columns = ['step'] + all_keys
+
+            if not hasattr(self, "_val_traj_rows"):
+                self._val_traj_rows = []
+
+            for idx in range(n):
+                traj_cot_log = traj_cot_logs[idx]
+                row_data = [self.global_steps] + [str(traj_cot_log.get(k, '')) for k in all_keys]
+                self._val_traj_rows.append(row_data)
+
+            table = wandb.Table(columns=columns, data=self._val_traj_rows)
+            wandb.log({"val/cot_trajectory": table}, step=self.global_steps)
 
     def _validate(self):
         reward_tensor_lst = []
@@ -1083,12 +1112,13 @@ class RayPPOTrainer:
                         #     self.async_rollout_manager.sleep()
 
                         ################ agent-environment loop ###############
-                        gen_batch_output = self.traj_collector.multi_turn_loop(
+                        gen_batch_output, train_traj_cot_logs = self.traj_collector.multi_turn_loop(
                                                                 gen_batch=gen_batch,
                                                                 actor_rollout_wg=self.actor_rollout_wg,
                                                                 envs=self.envs,
                                                                 is_train=True,
                                                                 )
+                        self._maybe_log_train_trajectory(train_traj_cot_logs)
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer("gen_max", timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)
