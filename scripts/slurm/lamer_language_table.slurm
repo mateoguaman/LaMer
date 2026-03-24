@@ -4,7 +4,7 @@
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:5
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=800G
 #SBATCH --time=24:00:00
@@ -27,19 +27,20 @@ VAL_DATA_PATH="$HOME/data/verl-agent/text/test.parquet"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-}"
 RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
 REWARD_TYPE="${REWARD_TYPE:-block2block}"
+ADV_ESTIMATOR="${ADV_ESTIMATOR:-gigpo}"
 if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "ERROR: CHECKPOINT_ROOT is not set."
     echo "Set CHECKPOINT_ROOT in .env.language_table before submitting."
     exit 1
 fi
 RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d-%H%M%S)}"
-TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}"
+TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}/${RUN_ID}"
 RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${RUN_ID}.log"
 
 TRAIN_PORT=50051
 VAL_PORT=50052
-TRAIN_NUM_ENVS="${TRAIN_NUM_ENVS:-4}"
-VAL_NUM_ENVS="${VAL_NUM_ENVS:-4}"
+TRAIN_NUM_ENVS="${TRAIN_NUM_ENVS:-16}"
+VAL_NUM_ENVS="${VAL_NUM_ENVS:-128}"
 GROUP_SIZE="${GROUP_SIZE:-8}"
 BLOCK_MODE="BLOCK_4"
 MAX_INNER_STEPS="${MAX_INNER_STEPS:-5}"
@@ -99,7 +100,7 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 # Suppress noisy framework warnings that clutter logs
 export TF_CPP_MIN_LOG_LEVEL=2
 export GRPC_VERBOSITY=ERROR
-export JAX_PLATFORMS=cpu
+# Note: NOT setting JAX_PLATFORMS=cpu because env server runs on GPU 0
 mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")"
 [ -n "${CONDA_PKGS_DIRS:-}" ] && mkdir -p "${CONDA_PKGS_DIRS}"
 [ -n "${PIP_CACHE_DIR:-}" ] && mkdir -p "${PIP_CACHE_DIR}"
@@ -112,10 +113,8 @@ export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
 
 # GPU isolation: env servers (JAX/LAVA) on GPU 0, LaMer training on GPUs 1-4.
 # Without this, JAX preallocates most of GPU memory before training starts → OOM.
-# ENV_SERVER_GPU=0
-# TRAIN_GPUS="1,2,3,4"
-ENV_SERVER_GPU=-1
-TRAIN_GPUS="0,1,2,3"
+ENV_SERVER_GPU=0
+TRAIN_GPUS="1,2,3,4"
 
 ########################################
 ### Step 0: Download VLA checkpoint ####
@@ -275,7 +274,7 @@ python3 -m examples.data_preprocess.prepare \
     --val_data_size ${VAL_NUM_ENVS}
 
 export TRAIN_DATA_PATH VAL_DATA_PATH
-export TRAIN_NUM_ENVS VAL_NUM_ENVS GROUP_SIZE
+export TRAIN_NUM_ENVS VAL_NUM_ENVS GROUP_SIZE ADV_ESTIMATOR
 export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
 export ENV_ADDRESS="127.0.0.1:${TRAIN_PORT}"
 export VAL_ADDRESS="127.0.0.1:${VAL_PORT}"

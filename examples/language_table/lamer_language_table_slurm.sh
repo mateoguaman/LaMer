@@ -1,4 +1,4 @@
-set -eo pipefail
+set -x
 
 # Tillicum/SLURM: 1 node x 4 training GPUs (GPU 0 reserved for env servers).
 # Env servers run on localhost (same node).
@@ -7,6 +7,7 @@ set -eo pipefail
 #   TRAIN_DATA_PATH, VAL_DATA_PATH
 
 ENGINE=${ENGINE:-vllm}
+ADV_ESTIMATOR=${ADV_ESTIMATOR:-gigpo}
 
 train_data_size=${TRAIN_NUM_ENVS:-16}
 val_data_size=${VAL_NUM_ENVS:-128}
@@ -17,8 +18,19 @@ reflection_type="history_and_reflection"
 env_address="${ENV_ADDRESS:-127.0.0.1:50051}"
 val_address="${VAL_ADDRESS:-127.0.0.1:50052}"
 
+# Algorithm-specific overrides
+ALGO_ARGS=()
+if [ "$ADV_ESTIMATOR" = "gigpo" ]; then
+    ALGO_ARGS+=(
+        "+algorithm.step_gamma=0.95"
+        "+algorithm.traj_gamma=0.9"
+        "algorithm.gigpo.step_advantage_w=1.0"
+        "algorithm.gigpo.mode=$mode"
+    )
+fi
+
 python3 -m verl.trainer.main_ppo \
-    algorithm.adv_estimator=gigpo \
+    algorithm.adv_estimator=$ADV_ESTIMATOR \
     data.train_files=${TRAIN_DATA_PATH:?'Set TRAIN_DATA_PATH'} \
     data.val_files=${VAL_DATA_PATH:?'Set VAL_DATA_PATH'} \
     data.train_batch_size=$train_data_size \
@@ -57,10 +69,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.5 \
     algorithm.use_kl_in_reward=False \
     algorithm.gamma=0.95 \
-    +algorithm.step_gamma=0.95 \
-    +algorithm.traj_gamma=0.9 \
-    algorithm.gigpo.step_advantage_w=1.0 \
-    algorithm.gigpo.mode=$mode \
+    "${ALGO_ARGS[@]}" \
     reward_model.reward_manager=episode \
     env.env_name=language_table \
     env.seed=0 \
