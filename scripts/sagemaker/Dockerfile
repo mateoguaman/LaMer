@@ -63,6 +63,11 @@ RUN /opt/miniforge3/envs/lamer/bin/pip install --no-cache-dir \
 # entry_point execution when SageMaker runs `docker run <image> train`.
 # LaMer code is uploaded via source_dir at launch time (not baked into image),
 # so you only need to rebuild when dependencies change.
-RUN pip install --no-cache-dir sagemaker-training
+# Installed in the lamer env (Python 3.12) to avoid depending on the base
+# Miniforge Python version.
+RUN /opt/miniforge3/envs/lamer/bin/pip install --no-cache-dir sagemaker-training
+
+# Put lamer env's bin on PATH so SageMaker can find the `train` command.
+ENV PATH="/opt/miniforge3/envs/lamer/bin:${PATH}"
 
 WORKDIR /opt/ml/code
