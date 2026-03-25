@@ -45,7 +45,7 @@ def gpu_mem_mb(device=None):
         device = torch.cuda.current_device()
     alloc = torch.cuda.memory_allocated(device) / 1024**2
     reserved = torch.cuda.memory_reserved(device) / 1024**2
-    total = torch.cuda.get_device_properties(device).total_mem / 1024**2
+    total = torch.cuda.get_device_properties(device).total_memory / 1024**2
     return alloc, reserved, total
 
 
@@ -292,7 +292,7 @@ def main():
 
     device_count = torch.cuda.device_count()
     device_name = torch.cuda.get_device_name(0)
-    device_mem = torch.cuda.get_device_properties(0).total_mem / 1024**3
+    device_mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
     logger.info("GPUs: %d x %s (%.0f GB each)", device_count, device_name, device_mem)
     logger.info("Sequence length: %d (prompt=%d + response=%d)",
                 seq_length, args.max_prompt_length, args.max_response_length)

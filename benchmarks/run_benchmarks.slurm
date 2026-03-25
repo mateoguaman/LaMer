@@ -132,7 +132,7 @@ if echo "${BENCHMARKS}" | grep -q "vla"; then
     XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 \
     ${LANGTABLE_PYTHON} -m language_table.lamer.benchmark_vla_standalone \
         --checkpoint_dir "${VLA_CHECKPOINT_DIR_ARG}" \
-        --batch_sizes "1,2,4,8,16,32,64,128,256,512,1024" \
+        --batch_sizes "1,2,4,8,16,32,64,128,256,512,1024,2048,4096" \
         --num_warmup 3 --num_iters 20 \
         2>&1 | tee "${BENCH_OUTPUT_DIR}/vla_inference.log"
 
@@ -154,10 +154,10 @@ if echo "${BENCHMARKS}" | grep -q "envs"; then
     XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
     ${LANGTABLE_PYTHON} -m language_table.lamer.benchmark_envs_standalone \
         --checkpoint_dir "${VLA_CHECKPOINT_DIR_ARG}" \
-        --env_counts "4,8,16,32,64,128,256" \
+        --env_counts "4,8,16,32,64,128,256,512,1024" \
         --inner_steps 20 \
         --cpus_per_gpu 8 \
-        --time_budget_s 30 \
+        --time_budget_s 120 \
         2>&1 | tee "${BENCH_OUTPUT_DIR}/env_scaling.log"
 
     echo "Env scaling benchmark complete."
