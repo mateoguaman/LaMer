@@ -55,7 +55,7 @@ if [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
 fi
 
 # Preprocessing mode for _build_batch: "original", "batched_tf", or "jax_gpu"
-PREPROCESS_MODE="${PREPROCESS_MODE:-original}"
+PREPROCESS_MODE="${PREPROCESS_MODE:-batched_tf}"
 
 ######################
 ### Setup ############
