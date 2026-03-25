@@ -65,7 +65,9 @@ mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")" "$(dirname "${TRA
 ######################
 ### Environment ######
 ######################
-export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
+# Don't inherit PYTHONPATH globally — sagemaker-training sets it to lamer
+# env's Python 3.12 stdlib, which breaks the ltvenv (Python 3.10) servers.
+# Instead, set PYTHONPATH per-subprocess below.
 export NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_SOCKET_NTHREADS=1
 export NCCL_NSOCKS_PERTHREAD=1
@@ -92,6 +94,7 @@ fi
 
 # Training server (background)
 echo "Starting training server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
+PYTHONPATH="${LANGTABLE_DIR}" \
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
@@ -109,6 +112,7 @@ echo "Training server PID: ${TRAIN_SERVER_PID}"
 
 # Validation server (background)
 echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
+PYTHONPATH="${LANGTABLE_DIR}" \
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
 XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
@@ -166,7 +170,7 @@ if [ "${SKIP_CONNECTION_TEST:-0}" = "1" ]; then
 else
     echo ""
     echo "=== Running connection test ==="
-    ${LANGTABLE_PYTHON} -m language_table.lamer.test_connection \
+    PYTHONPATH="${LANGTABLE_DIR}" ${LANGTABLE_PYTHON} -m language_table.lamer.test_connection \
         --host 127.0.0.1 --port ${TRAIN_PORT} --val_port ${VAL_PORT} --full \
         --timeout 300
     echo "Connection test passed!"
