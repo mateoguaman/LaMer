@@ -65,7 +65,8 @@ RUN /opt/miniforge3/envs/lamer/bin/pip install --no-cache-dir \
 # so you only need to rebuild when dependencies change.
 # Installed in the lamer env (Python 3.12) to avoid depending on the base
 # Miniforge Python version.
-RUN /opt/miniforge3/envs/lamer/bin/pip install --no-cache-dir sagemaker-training
+RUN /opt/miniforge3/envs/lamer/bin/pip install --no-cache-dir sagemaker-training \
+    && /opt/miniforge3/envs/lamer/bin/pip install --no-cache-dir --force-reinstall --no-deps wandb
 
 # Put lamer env's bin on PATH so SageMaker can find the `train` command.
 ENV PATH="/opt/miniforge3/envs/lamer/bin:${PATH}"
