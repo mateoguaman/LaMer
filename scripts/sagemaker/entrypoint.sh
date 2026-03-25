@@ -10,7 +10,7 @@ set -euo pipefail
 ### Config ###########
 ######################
 LAMER_DIR="/opt/ml/code"
-LANGTABLE_DIR="/opt/ml/code/language-table"
+LANGTABLE_DIR="/opt/language-table"
 LANGTABLE_PYTHON="/opt/miniforge3/envs/ltvenv/bin/python"
 LAMER_PYTHON="/opt/miniforge3/envs/lamer/bin/python"
 

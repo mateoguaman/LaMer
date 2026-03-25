@@ -38,10 +38,10 @@ ENV PATH="/opt/miniforge3/bin:${PATH}"
 RUN conda create -y -n ltvenv python=3.10 \
     && conda clean -afy
 
-COPY language-table /opt/ml/code/language-table
+COPY language-table /opt/language-table
 
 RUN /opt/miniforge3/envs/ltvenv/bin/pip install --no-cache-dir \
-        -r /opt/ml/code/language-table/requirements.txt \
+        -r /opt/language-table/requirements.txt \
     && /opt/miniforge3/envs/ltvenv/bin/pip install --no-cache-dir --no-deps \
         git+https://github.com/google-research/scenic.git@ae21d9e884015aa7bc7cf1d489af53d16c249726 \
     && /opt/miniforge3/envs/ltvenv/bin/pip cache purge 2>/dev/null || true
