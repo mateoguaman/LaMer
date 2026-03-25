@@ -8,25 +8,33 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=800G
 #SBATCH --time=4:00:00
-#SBATCH --output=slurm-bench-%j.out
-#SBATCH --error=slurm-bench-%j.err
+
+# NOTE: --output/--error are set by submit_benchmarks.sh via SLURM_LOG_DIR.
+# If submitting directly, logs go to slurm default (cwd).
 
 set -euo pipefail
 
 ######################
 ### Config ###########
 ######################
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LAMER_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-LANGTABLE_DIR="${LANGTABLE_DIR:-$(cd "${LAMER_DIR}/../language-table" && pwd)}"
-LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-ltvenv}"
-LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
+# LAMER_DIR must be set by the submit wrapper (or .env.language_table).
+# We cannot derive it from SCRIPT_DIR because SLURM copies the script to
+# /var/spool/slurmd/jobNNN/ before executing it.
+if [ -z "${LAMER_DIR:-}" ]; then
+    echo "ERROR: LAMER_DIR is not set."
+    echo "Use benchmarks/submit_benchmarks.sh to submit this job."
+    exit 1
+fi
 
-# Source .env.language_table if present (same pattern as submit_language_table.sh)
+# Source .env.language_table FIRST so all derived paths pick up cluster config
 if [ -f "${LAMER_DIR}/.env.language_table" ]; then
     # shellcheck disable=SC1091
     source "${LAMER_DIR}/.env.language_table"
 fi
+
+LANGTABLE_DIR="${LANGTABLE_DIR:-${LAMER_DIR}/../language-table}"
+LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-ltvenv}"
+LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
 
 # VLA checkpoint — read from .env.language_table or env var
 VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
@@ -67,13 +75,34 @@ conda activate "${LAMER_CONDA_ENV}"
 set -u
 LANGTABLE_PYTHON="$(conda run -n "${LANGTABLE_CONDA_ENV}" which python)"
 
+######################
+### Environment ######
+######################
+export NCCL_ASYNC_ERROR_HANDLING=1
+export HF_HUB_ETAG_TIMEOUT=60
+export HF_HUB_ENABLE_HF_TRANSFER=1
+export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+export TF_CPP_MIN_LOG_LEVEL=2
+export GRPC_VERBOSITY=ERROR
+
+# Create cache dirs that Tillicum needs
+[ -n "${CONDA_PKGS_DIRS:-}" ] && mkdir -p "${CONDA_PKGS_DIRS}"
+[ -n "${PIP_CACHE_DIR:-}" ] && mkdir -p "${PIP_CACHE_DIR}"
+[ -n "${TMPDIR:-}" ] && mkdir -p "${TMPDIR}"
+[ -n "${XDG_CACHE_HOME:-}" ] && mkdir -p "${XDG_CACHE_HOME}"
+
+# Language-table needs its repo on PYTHONPATH
+export PYTHONPATH="${LANGTABLE_DIR}:${LAMER_DIR}:${PYTHONPATH:-}"
+
 echo "============================================"
 echo "LaMer H200 Benchmark Suite"
 echo "============================================"
 echo "START TIME: $(date)"
 echo "HOSTNAME: $(hostname)"
+echo "SLURM_JOB_ID: ${SLURM_JOB_ID:-n/a}"
 echo "LAMER_DIR: ${LAMER_DIR}"
 echo "LANGTABLE_DIR: ${LANGTABLE_DIR}"
+echo "LANGTABLE_CONDA_ENV: ${LANGTABLE_CONDA_ENV}"
 echo "VLA_CHECKPOINT: ${VLA_CHECKPOINT}"
 echo "MODEL_PATH: ${MODEL_PATH}"
 echo "OUTPUT: ${BENCH_OUTPUT_DIR}"
@@ -83,10 +112,6 @@ echo ""
 # GPU info
 nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
 echo ""
-
-export PYTHONPATH="${LANGTABLE_DIR}:${LAMER_DIR}:${PYTHONPATH:-}"
-export TF_CPP_MIN_LOG_LEVEL=2
-export GRPC_VERBOSITY=ERROR
 
 # GPU assignments
 ENV_SERVER_GPU=0
