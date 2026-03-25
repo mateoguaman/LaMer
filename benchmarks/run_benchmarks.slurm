@@ -58,6 +58,9 @@ mkdir -p "${BENCH_OUTPUT_DIR}"
 # Which benchmarks to run (comma-separated: vla,envs,outer)
 BENCHMARKS="${BENCHMARKS:-vla,envs,outer}"
 
+# Preprocess modes for VLA benchmark (original, batched_tf, jax_gpu)
+PREPROCESS_MODES="${PREPROCESS_MODES:-original}"
+
 # Outer-loop model
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-4B}"
 
@@ -134,6 +137,7 @@ if echo "${BENCHMARKS}" | grep -q "vla"; then
         --checkpoint_dir "${VLA_CHECKPOINT_DIR_ARG}" \
         --batch_sizes "1,2,4,8,16,32,64,128,256,512,1024,2048,4096" \
         --num_warmup 3 --num_iters 20 \
+        --modes "${PREPROCESS_MODES}" \
         2>&1 | tee "${BENCH_OUTPUT_DIR}/vla_inference.log"
 
     echo "VLA benchmark complete."

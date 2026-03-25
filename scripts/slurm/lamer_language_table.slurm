@@ -54,6 +54,9 @@ if [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
     VLA_CHECKPOINT="${VLA_CHECKPOINT_DIR}/bc_resnet_sim_checkpoint_955000"
 fi
 
+# Preprocessing mode for _build_batch: "original", "batched_tf", or "jax_gpu"
+PREPROCESS_MODE="${PREPROCESS_MODE:-original}"
+
 ######################
 ### Setup ############
 ######################
@@ -160,6 +163,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
     --reward_type ${REWARD_TYPE} \
+    --preprocess_mode ${PREPROCESS_MODE} \
     ${VLA_FLAG} \
     &
 ENV_SERVER_PID=$!
