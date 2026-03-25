@@ -4,8 +4,8 @@
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:5
-#SBATCH --cpus-per-task=32
+#SBATCH --gres=gpu:8
+#SBATCH --cpus-per-task=64
 #SBATCH --mem=800G
 #SBATCH --time=4:00:00
 
@@ -151,10 +151,10 @@ if echo "${BENCHMARKS}" | grep -q "envs"; then
 
     CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
     XLA_PYTHON_CLIENT_PREALLOCATE=false \
-    XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
+    XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 \
     ${LANGTABLE_PYTHON} -m language_table.lamer.benchmark_envs_standalone \
         --checkpoint_dir "${VLA_CHECKPOINT_DIR_ARG}" \
-        --env_counts "4,8,16,32,64,128,256,512,1024" \
+        --env_counts "4,8,16,32,64,128,256,512,1024,2048" \
         --inner_steps 20 \
         --cpus_per_gpu 8 \
         --time_budget_s 120 \

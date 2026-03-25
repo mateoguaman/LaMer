@@ -76,7 +76,7 @@ if [ "${BENCH}" = "envs" ] || [ "${BENCH}" = "all" ]; then
     echo "=== Environment Scaling Benchmark (GPU ${ENV_GPU}) ==="
     CUDA_VISIBLE_DEVICES=${ENV_GPU} \
     XLA_PYTHON_CLIENT_PREALLOCATE=false \
-    XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
+    XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 \
     ${LANGTABLE_PYTHON} -m language_table.lamer.benchmark_envs_standalone \
         --checkpoint_dir "${VLA_CHECKPOINT_DIR}" \
         --env_counts "4,8,16,32,64,128,256" \
