@@ -65,9 +65,10 @@ mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")" "$(dirname "${TRA
 ######################
 ### Environment ######
 ######################
-# Don't inherit PYTHONPATH globally — sagemaker-training sets it to lamer
-# env's Python 3.12 stdlib, which breaks the ltvenv (Python 3.10) servers.
-# Instead, set PYTHONPATH per-subprocess below.
+# SageMaker training toolkit sets PYTHONPATH to the lamer env's Python 3.12
+# stdlib, which breaks any process using a different Python (ltvenv=3.10,
+# conda base=3.13).  Unset it globally; each subprocess sets its own below.
+unset PYTHONPATH
 export NCCL_ASYNC_ERROR_HANDLING=1
 export NCCL_SOCKET_NTHREADS=1
 export NCCL_NSOCKS_PERTHREAD=1
@@ -196,9 +197,21 @@ export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
 export ENV_ADDRESS="127.0.0.1:${TRAIN_PORT}"
 export VAL_ADDRESS="127.0.0.1:${VAL_PORT}"
 
-# Activate lamer env so `python3` in the training script resolves to the right interpreter
-conda activate lamer
+# Ensure lamer env's python is first on PATH for the training script.
+# Avoid `conda activate` — it breaks under set -u (unbound variable errors
+# in conda's shell function) and is redundant since the Dockerfile already
+# sets PATH to include lamer/bin.
+export PATH="/opt/miniforge3/envs/lamer/bin:${PATH}"
+
+set +e
 bash "${LAMER_DIR}/examples/language_table/lamer_language_table_slurm.sh"
+TRAIN_EXIT_CODE=$?
+set -e
+
+if [ ${TRAIN_EXIT_CODE} -ne 0 ]; then
+    echo "[$(date)] ERROR: Training exited with code ${TRAIN_EXIT_CODE}"
+    exit ${TRAIN_EXIT_CODE}
+fi
 
 # Copy final model to SageMaker output path
 if [ -d "${TRAINER_LOCAL_DIR}" ]; then

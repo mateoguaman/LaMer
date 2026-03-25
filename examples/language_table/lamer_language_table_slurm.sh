@@ -1,4 +1,4 @@
-set -x
+set -xo pipefail
 
 # Tillicum/SLURM: 1 node x 4 training GPUs (GPU 0 reserved for env servers).
 # Env servers run on localhost (same node).
