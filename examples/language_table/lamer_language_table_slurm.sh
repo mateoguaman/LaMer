@@ -11,19 +11,23 @@ ENGINE=${ENGINE:-vllm}
 train_data_size=${TRAIN_NUM_ENVS:-16}
 val_data_size=${VAL_NUM_ENVS:-128}
 group_size=${GROUP_SIZE:-8}
+num_attempts=${NUM_ATTEMPTS:-3}
+max_turns=${MAX_TURNS:-5}
 mode="mean_norm"
 reflection_type="history_and_reflection"
 
 env_address="${ENV_ADDRESS:-127.0.0.1:50051}"
 val_address="${VAL_ADDRESS:-127.0.0.1:50052}"
 
+# data.truncation='error' => 'left' \
+# data.max_prompt_length=2048 \
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=gigpo \
     data.train_files=${TRAIN_DATA_PATH:?'Set TRAIN_DATA_PATH'} \
     data.val_files=${VAL_DATA_PATH:?'Set VAL_DATA_PATH'} \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
-    data.max_prompt_length=2048 \
+    data.max_prompt_length=4096 \
     data.max_response_length=1024 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
@@ -68,8 +72,8 @@ python3 -m verl.trainer.main_ppo \
     +env.remote_address=$env_address \
     +env.remote_val_address=$val_address \
     env.rollout.n=$group_size \
-    env.num_attempts=3 \
-    env.max_turns=3 \
+    env.num_attempts=$num_attempts \
+    env.max_turns=$max_turns \
     +env.reflection_type=$reflection_type \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
@@ -80,10 +84,12 @@ python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=5 \
-    trainer.total_epochs=300 \
+    trainer.total_epochs=1000 \
     trainer.val_before_train=True \
     trainer.log_val_generations=$val_data_size \
     trainer.log_train_generations=$train_data_size \
+    trainer.log_train_videos=8 \
+    trainer.log_val_videos=8 \
     trainer.max_actor_ckpt_to_keep=1 \
     trainer.max_critic_ckpt_to_keep=1 \
     trainer.resume_mode=disable \

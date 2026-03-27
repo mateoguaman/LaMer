@@ -4,7 +4,7 @@
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:5
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=800G
 #SBATCH --time=24:00:00
@@ -36,8 +36,11 @@ RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d-%H%M%S)}"
 TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}"
 RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${RUN_ID}.log"
 
-TRAIN_PORT=50051
-VAL_PORT=50052
+# random ports to avoid crash on same node
+BASE_PORT=$(( 50000 + (SLURM_JOB_ID % 5000) * 2 ))
+TRAIN_PORT=${BASE_PORT}
+VAL_PORT=$(( BASE_PORT + 1 ))
+
 TRAIN_NUM_ENVS="${TRAIN_NUM_ENVS:-4}"
 VAL_NUM_ENVS="${VAL_NUM_ENVS:-4}"
 GROUP_SIZE="${GROUP_SIZE:-8}"
@@ -114,7 +117,7 @@ export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
 # Without this, JAX preallocates most of GPU memory before training starts → OOM.
 # ENV_SERVER_GPU=0
 # TRAIN_GPUS="1,2,3,4"
-ENV_SERVER_GPU=-1
+ENV_SERVER_GPU=4
 TRAIN_GPUS="0,1,2,3"
 
 ########################################
@@ -148,8 +151,9 @@ fi
 # Pin to ENV_SERVER_GPU; disable JAX preallocation so it only uses what LAVA needs (~2-3 GB)
 echo "Starting training server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
+JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.7 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${TRAIN_PORT} \
     --num_envs ${TRAIN_NUM_ENVS} --group_n ${GROUP_SIZE} \
@@ -166,8 +170,9 @@ echo "Training server PID: ${TRAIN_SERVER_PID} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=
 # Validation server (background, group_n=1 — no grouping for eval)
 echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
+JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.2 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${VAL_PORT} \
     --num_envs ${VAL_NUM_ENVS} --group_n 1 \
@@ -276,6 +281,7 @@ python3 -m examples.data_preprocess.prepare \
 
 export TRAIN_DATA_PATH VAL_DATA_PATH
 export TRAIN_NUM_ENVS VAL_NUM_ENVS GROUP_SIZE
+export NUM_ATTEMPTS MAX_TURNS
 export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
 export ENV_ADDRESS="127.0.0.1:${TRAIN_PORT}"
 export VAL_ADDRESS="127.0.0.1:${VAL_PORT}"
