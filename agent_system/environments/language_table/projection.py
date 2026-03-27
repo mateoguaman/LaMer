@@ -81,7 +81,7 @@ def language_table_projection(actions: List[str], phase="play"):
             if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
                 reflections[i] = text[
                     start_idx + len(start_tag):end_idx
-                ].strip()[:2000]
+                ].strip()#[:2000]
                 valids[i] = 1
 
         return reflections, valids
