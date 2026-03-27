@@ -50,6 +50,16 @@ MAX_INNER_STEPS="${MAX_INNER_STEPS:-5}"
 NUM_ATTEMPTS="${NUM_ATTEMPTS:-2}"
 MAX_TURNS="${MAX_TURNS:-2}"
 
+# Multistep task configuration (only used when REWARD_TYPE=multistep)
+TRAIN_TASK_LOCATIONS="${TRAIN_TASK_LOCATIONS:-}"
+TRAIN_TASK_SHAPES="${TRAIN_TASK_SHAPES:-}"
+TRAIN_TASK_COLORS="${TRAIN_TASK_COLORS:-}"
+TRAIN_TASK_N_STEPS="${TRAIN_TASK_N_STEPS:-2}"
+VAL_TASK_LOCATIONS="${VAL_TASK_LOCATIONS:-}"
+VAL_TASK_SHAPES="${VAL_TASK_SHAPES:-}"
+VAL_TASK_COLORS="${VAL_TASK_COLORS:-}"
+VAL_TASK_N_STEPS="${VAL_TASK_N_STEPS:-3}"
+
 # VLA (inner-loop policy) — set to "" to use random actions
 VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
 VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
@@ -151,6 +161,22 @@ else
     VLA_FLAG="--policy gemini"
 fi
 
+# Build task-config flags for multistep reward
+TRAIN_TASK_FLAGS=""
+if [ "${REWARD_TYPE}" = "multistep" ]; then
+    [ -n "${TRAIN_TASK_LOCATIONS}" ] && TRAIN_TASK_FLAGS+=" --task_locations ${TRAIN_TASK_LOCATIONS}"
+    [ -n "${TRAIN_TASK_SHAPES}" ]    && TRAIN_TASK_FLAGS+=" --task_shapes ${TRAIN_TASK_SHAPES}"
+    [ -n "${TRAIN_TASK_COLORS}" ]    && TRAIN_TASK_FLAGS+=" --task_colors ${TRAIN_TASK_COLORS}"
+    TRAIN_TASK_FLAGS+=" --task_n_steps ${TRAIN_TASK_N_STEPS}"
+fi
+VAL_TASK_FLAGS=""
+if [ "${REWARD_TYPE}" = "multistep" ]; then
+    [ -n "${VAL_TASK_LOCATIONS}" ] && VAL_TASK_FLAGS+=" --task_locations ${VAL_TASK_LOCATIONS}"
+    [ -n "${VAL_TASK_SHAPES}" ]    && VAL_TASK_FLAGS+=" --task_shapes ${VAL_TASK_SHAPES}"
+    [ -n "${VAL_TASK_COLORS}" ]    && VAL_TASK_FLAGS+=" --task_colors ${VAL_TASK_COLORS}"
+    VAL_TASK_FLAGS+=" --task_n_steps ${VAL_TASK_N_STEPS}"
+fi
+
 # Train server (background)
 TRAIN_WORKERS=$((TRAIN_NUM_ENVS * GROUP_SIZE))
 echo "Starting train server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=${TRAIN_WORKERS} workers, GPU ${ENV_SERVER_GPU})..."
@@ -167,6 +193,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --reward_type ${REWARD_TYPE} \
     --preprocess_mode ${PREPROCESS_MODE} \
     --split train \
+    ${TRAIN_TASK_FLAGS} \
     ${VLA_FLAG} \
     &
 TRAIN_SERVER_PID=$!
@@ -187,6 +214,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --reward_type ${REWARD_TYPE} \
     --preprocess_mode ${PREPROCESS_MODE} \
     --split val \
+    ${VAL_TASK_FLAGS} \
     ${VLA_FLAG} \
     &
 VAL_SERVER_PID=$!
