@@ -296,6 +296,8 @@ trainer:
   logger: ['console', 'wandb']
   log_val_generations: 0
   log_train_generations: 0
+  log_val_videos: ${trainer.log_val_generations}
+  log_train_videos: ${trainer.log_train_generations}
   nnodes: 1
   n_gpus_per_node: 8
   save_freq: -1

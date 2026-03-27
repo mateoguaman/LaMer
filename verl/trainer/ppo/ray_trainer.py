@@ -684,6 +684,52 @@ class RayPPOTrainer:
         # Log to each configured logger
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
 
+    def _maybe_log_val_video(self, traj_cot_logs):
+        """Log validation rollout videos to wandb."""
+        n = self.config.trainer.get("log_val_videos", 0)
+        if n == 0 or not traj_cot_logs:
+            return
+        if 'wandb' not in self.config.trainer.logger:
+            return
+
+        import wandb
+        logged = 0
+        for idx, cot_log in enumerate(traj_cot_logs):
+            if logged >= n:
+                break
+            frames = cot_log.get("frames", [])
+            if not frames:
+                continue
+            video_array = np.stack(frames).transpose(0, 3, 1, 2)
+            wandb.log(
+                {f"val/env_video_{logged}": wandb.Video(video_array, fps=10, format="mp4")},
+                step=self.global_steps,
+            )
+            logged += 1
+
+    def _maybe_log_train_video(self, traj_cot_logs):
+        """Log training rollout videos to wandb."""
+        n = self.config.trainer.get("log_train_videos", 0)
+        if n == 0 or not traj_cot_logs:
+            return
+        if 'wandb' not in self.config.trainer.logger:
+            return
+
+        import wandb
+        logged = 0
+        for idx, cot_log in enumerate(traj_cot_logs):
+            if logged >= n:
+                break
+            frames = cot_log.get("frames", [])
+            if not frames:
+                continue
+            video_array = np.stack(frames).transpose(0, 3, 1, 2)
+            wandb.log(
+                {f"training/env_video_{logged}": wandb.Video(video_array, fps=10, format="mp4")},
+                step=self.global_steps,
+            )
+            logged += 1
+
     def _maybe_log_train_trajectory(self, traj_cot_logs):
         """ Log train trajectory """
         generations_to_log = self.config.trainer.get("log_train_generations", 0)
@@ -696,11 +742,13 @@ class RayPPOTrainer:
         for idx in range(n):
             traj_cot_log = traj_cot_logs[idx]
             for k, v in traj_cot_log.items():
+                if k == "frames":
+                    continue
                 print(f'\n[{k}]\n{v}')
 
         if 'wandb' in self.config.trainer.logger:
             import wandb
-            all_keys = ['env_id', 'reward', 'trajectory', 'env_info', 'won']
+            all_keys = ['env_id', 'reward', 'trajectory', 'env_info', 'won', 'language_instruction']
             columns = ['step'] + all_keys
 
             if not hasattr(self, "_train_traj_rows"):
@@ -726,11 +774,13 @@ class RayPPOTrainer:
         for idx in range(n):
             traj_cot_log = traj_cot_logs[idx]
             for k, v in traj_cot_log.items():
+                if k == "frames":
+                    continue
                 print(f'\n[{k}]\n{v}')
 
         if 'wandb' in self.config.trainer.logger:
             import wandb
-            all_keys = ['env_id', 'reward', 'trajectory', 'env_info', 'won']
+            all_keys = ['env_id', 'reward', 'trajectory', 'env_info', 'won', 'language_instruction']
             columns = ['step'] + all_keys
 
             if not hasattr(self, "_val_traj_rows"):
@@ -837,6 +887,7 @@ class RayPPOTrainer:
 
         # self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
         self._maybe_log_val_trajectory(traj_cot_logs)
+        self._maybe_log_val_video(traj_cot_logs)
 
         reward_tensor = torch.cat(reward_tensor_lst, dim=0).sum(-1).cpu()  # (batch_size,)
         data_sources = np.concatenate(data_source_lst, axis=0)
@@ -1119,6 +1170,7 @@ class RayPPOTrainer:
                                                                 is_train=True,
                                                                 )
                         self._maybe_log_train_trajectory(train_traj_cot_logs)
+                        self._maybe_log_train_video(train_traj_cot_logs)
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer("gen_max", timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)
