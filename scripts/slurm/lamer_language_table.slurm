@@ -27,13 +27,14 @@ VAL_DATA_PATH="$HOME/data/verl-agent/text/test.parquet"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-}"
 RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
 REWARD_TYPE="${REWARD_TYPE:-block2block}"
+ADV_ESTIMATOR="${ADV_ESTIMATOR:-gigpo}"
 if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "ERROR: CHECKPOINT_ROOT is not set."
     echo "Set CHECKPOINT_ROOT in .env.language_table before submitting."
     exit 1
 fi
 RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d-%H%M%S)}"
-TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}"
+TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}/${RUN_ID}"
 RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${RUN_ID}.log"
 
 # random ports to avoid crash on same node
@@ -55,6 +56,9 @@ VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
 if [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
     VLA_CHECKPOINT="${VLA_CHECKPOINT_DIR}/bc_resnet_sim_checkpoint_955000"
 fi
+
+# Preprocessing mode for _build_batch: "original", "batched_tf", or "jax_gpu"
+PREPROCESS_MODE="${PREPROCESS_MODE:-batched_tf}"
 
 ######################
 ### Setup ############
@@ -102,7 +106,7 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 # Suppress noisy framework warnings that clutter logs
 export TF_CPP_MIN_LOG_LEVEL=2
 export GRPC_VERBOSITY=ERROR
-export JAX_PLATFORMS=cpu
+# Note: NOT setting JAX_PLATFORMS=cpu because env server runs on GPU 0
 mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")"
 [ -n "${CONDA_PKGS_DIRS:-}" ] && mkdir -p "${CONDA_PKGS_DIRS}"
 [ -n "${PIP_CACHE_DIR:-}" ] && mkdir -p "${PIP_CACHE_DIR}"
@@ -147,21 +151,25 @@ else
     VLA_FLAG="--policy gemini"
 fi
 
-# Training server (background)
-# Pin to ENV_SERVER_GPU; disable JAX preallocation so it only uses what LAVA needs (~2-3 GB)
-echo "Starting training server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
+# Unified env server (background)
+# Single process serves both train and val on separate ports, sharing one
+# LAVA model on GPU ${ENV_SERVER_GPU} with MEM_FRACTION=0.9.
+TOTAL_WORKERS=$((TRAIN_NUM_ENVS * GROUP_SIZE + VAL_NUM_ENVS))
+echo "Starting unified env server (train=${TRAIN_PORT}, val=${VAL_PORT}, ${TOTAL_WORKERS} total workers, GPU ${ENV_SERVER_GPU})..."
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
 JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.7 \
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
-    --host 0.0.0.0 --port ${TRAIN_PORT} \
-    --num_envs ${TRAIN_NUM_ENVS} --group_n ${GROUP_SIZE} \
+    --unified \
+    --host 0.0.0.0 --train_port ${TRAIN_PORT} --val_port ${VAL_PORT} \
+    --train_num_envs ${TRAIN_NUM_ENVS} --train_group_n ${GROUP_SIZE} \
+    --val_num_envs ${VAL_NUM_ENVS} --val_group_n 1 \
     --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
     --reward_type ${REWARD_TYPE} \
-    --split train \
+    --preprocess_mode ${PREPROCESS_MODE} \
     ${VLA_FLAG} \
     &
 TRAIN_SERVER_PID=$!
@@ -204,10 +212,10 @@ cleanup() {
     local exit_code=$?
     echo "[$(date)] cleanup() called — exit_code=${exit_code}, signal=${RECEIVED_SIGNAL:-none}"
     [ -n "${MEM_MONITOR_PID}" ] && kill ${MEM_MONITOR_PID} 2>/dev/null || true
-    echo "Cleaning up env servers..."
-    kill ${TRAIN_SERVER_PID} ${VAL_SERVER_PID} 2>/dev/null || true
-    wait ${TRAIN_SERVER_PID} ${VAL_SERVER_PID} 2>/dev/null || true
-    echo "Servers stopped."
+    echo "Cleaning up env server..."
+    kill ${ENV_SERVER_PID} 2>/dev/null || true
+    wait ${ENV_SERVER_PID} 2>/dev/null || true
+    echo "Server stopped."
     if [ -n "${RECEIVED_SIGNAL}" ]; then
         echo "[$(date)] Job terminated by signal: ${RECEIVED_SIGNAL}"
         exit 1
@@ -280,7 +288,7 @@ python3 -m examples.data_preprocess.prepare \
     --val_data_size ${VAL_NUM_ENVS}
 
 export TRAIN_DATA_PATH VAL_DATA_PATH
-export TRAIN_NUM_ENVS VAL_NUM_ENVS GROUP_SIZE
+export TRAIN_NUM_ENVS VAL_NUM_ENVS GROUP_SIZE ADV_ESTIMATOR
 export NUM_ATTEMPTS MAX_TURNS
 export LEARNING_RATE BATCH_SIZE MICRO_BATCH_SIZE
 export USE_KL_LOSS KL_LOSS_COEF KL_LOSS_TYPE

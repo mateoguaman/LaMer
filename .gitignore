@@ -10,6 +10,7 @@ lamer-*.err
 .env.language_table.secrets
 .env.azure
 .env.azure.secrets
+.env.sagemaker
 logs/
 checkpoints/
 *.csv

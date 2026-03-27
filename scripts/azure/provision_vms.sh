@@ -6,6 +6,7 @@
 # Usage:
 #   scripts/azure/provision_vms.sh          # create all 3 VMs
 #   scripts/azure/provision_vms.sh --info   # just print IPs of existing VMs
+#   scripts/azure/provision_vms.sh --resume  # start deallocated VMs
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -97,6 +98,44 @@ print_ips() {
 if [ "${1:-}" = "--info" ]; then
     print_ips
     exit 0
+fi
+
+if [ "${1:-}" = "--resume" ]; then
+    RETRY_INTERVAL=120  # seconds between retries
+    ALL_VMS=("${VM_TRAIN_0}" "${VM_TRAIN_1}" "${VM_ENV}")
+
+    echo "=== Resuming deallocated VMs ==="
+    while true; do
+        pending=()
+        for vm in "${ALL_VMS[@]}"; do
+            state=$(az vm show -g "${RG}" -n "${vm}" -d --query powerState -o tsv 2>/dev/null || echo "unknown")
+            if [ "${state}" = "VM running" ]; then
+                continue
+            else
+                echo "  Starting ${vm} (state: '${state:-unknown}')..."
+                if az vm start -g "${RG}" --name "${vm}" 2>&1; then
+                    echo "  ${vm} started."
+                else
+                    echo "  ${vm} failed (likely capacity issue)."
+                    pending+=("${vm}")
+                fi
+            fi
+        done
+
+        if [ ${#pending[@]} -eq 0 ]; then
+            echo ""
+            echo "All VMs are running."
+            echo "Note: public IPs may have changed since deallocation."
+            print_ips
+            exit 0
+        fi
+
+        echo ""
+        echo "$(date '+%H:%M:%S') — ${#pending[@]} VM(s) still not running: ${pending[*]}"
+        echo "  Retrying in ${RETRY_INTERVAL}s... (Ctrl-C to stop)"
+        sleep "${RETRY_INTERVAL}"
+        echo ""
+    done
 fi
 
 echo "=== Provisioning Azure VMs ==="
