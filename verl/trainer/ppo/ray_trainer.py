@@ -684,6 +684,24 @@ class RayPPOTrainer:
         # Log to each configured logger
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
 
+    def _select_video_indices(self, total, n):
+        """Pick env indices spread across groups so logged videos show diverse tasks.
+
+        Workers are laid out as [group0_member0, ..., group0_memberK, group1_member0, ...].
+        Striding by group_n picks the first member of each group, giving one
+        video per unique task. Indices are deterministic across epochs.
+        """
+        group_n = self.config.actor_rollout_ref.rollout.get("n", 1)
+        group_heads = list(range(0, total, group_n))
+        if n <= len(group_heads):
+            return group_heads[:n]
+        indices = list(group_heads)
+        for offset in range(1, group_n):
+            if len(indices) >= n:
+                break
+            indices.extend(range(offset, total, group_n))
+        return sorted(indices[:n])
+
     def _maybe_log_val_video(self, traj_cot_logs):
         """Log validation rollout videos to wandb."""
         n = self.config.trainer.get("log_val_videos", 0)
@@ -693,10 +711,10 @@ class RayPPOTrainer:
             return
 
         import wandb
+        indices = self._select_video_indices(len(traj_cot_logs), n)
         logged = 0
-        for idx, cot_log in enumerate(traj_cot_logs):
-            if logged >= n:
-                break
+        for idx in indices:
+            cot_log = traj_cot_logs[idx]
             frames = cot_log.get("frames", [])
             if not frames:
                 continue
@@ -716,10 +734,10 @@ class RayPPOTrainer:
             return
 
         import wandb
+        indices = self._select_video_indices(len(traj_cot_logs), n)
         logged = 0
-        for idx, cot_log in enumerate(traj_cot_logs):
-            if logged >= n:
-                break
+        for idx in indices:
+            cot_log = traj_cot_logs[idx]
             frames = cot_log.get("frames", [])
             if not frames:
                 continue
