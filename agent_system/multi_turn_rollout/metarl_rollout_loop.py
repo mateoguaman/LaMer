@@ -514,15 +514,21 @@ class TrajectoryCollector:
             phase = ''
 
             env_internal_state = {}
+            collected_frames = []
             if total_infos is not None:
                 for info in total_infos[bs]:
                     for key, val in info.items():
-                        if val is not None:
+                        if key == "frames":
+                            if val:
+                                collected_frames.extend(val)
+                        elif val is not None:
                             env_internal_state[key] = val
 
             cot_log['env_id'] = bs + 1
             cot_log['env_info'] = str(env_internal_state) if env_internal_state else ''
             cot_log['won'] = env_internal_state.get('won', False)
+            cot_log['frames'] = collected_frames
+            cot_log['language_instruction'] = env_internal_state.get('language_instruction', '')
 
             if env_internal_state:
                 cot_log['trajectory'] += "\n#### Environment Internal State ####\n"
