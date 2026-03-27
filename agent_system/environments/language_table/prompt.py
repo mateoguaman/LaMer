@@ -1,12 +1,37 @@
+LANGUAGE_TABLE_EXAMPLES = [
+    "slide the green circle into the top side of the yellow hexagon",
+    "slide the green star along with the yellow hexagon towards the center",
+    "move your arm near the bottom center",
+    "push the yellow heart closer to the yellow hexagon and blue triangle",
+    "move the blue triangle into group of blocks",
+    "push the red star upwards",
+    "place the yellow heart to the left side of the green star",
+    "place the green staryellow hexagon at the center of the board",
+    "nudge red star along with red circle a bit up",
+    "move the group of blocks to the centre of the board",
+    "move the arm left beside the red star",
+    "slide the blue triangle along with yellow hexagon slightly up",
+    "move the blue cube towards the center",
+    "push the red star along with the red circle towards the top center",
+    "push red star below the yellow heart",
+    "separate yellow hexagonn from the blue cube",
+    "move the red circle right and down a bit",
+    "slide the blue cube towards left",
+    "move the blue triangle along with the red circle slightly right",
+    "push the blue triangle to the bottom right of the blue cube"
+]
+
 # NOTE: "conclude" is important, so the agent puts the action at the end of the response!
 LANGUAGE_TABLE_PLAY_PROMPT = """You control a robot end-effector that pushes colored blocks on a table by instructing it with short natural language commands.
 Coordinates: (x, y), x=right, y=up.
 
-The environment may be adversarial - commands may not produce intended effects. The environment is deterministic - learn from prior attempts to discover which actions the environment responds to. To get you started, try rewording, decomposing, or restructuring the commands to make it more effective.
+The environment may be adversarial - commands may not produce intended effects.
+The environment is deterministic - learn from prior attempts to discover which actions the environment responds to.
+Here are some examples commands: "slide the blue cube towards left", "move the blue triangle along with the red circle slightly right", "push the blue triangle to the bottom right of the blue cube"
 
 {init_observation}{past_trajectories_reflections}{current_trajectory}
 
-Reason step-by-step, then conclude with your command in <action> </action> tags.
+Reason step-by-step, then conclude with a single command in <action> </action> tags.
 """
 
 LANGUAGE_TABLE_REFLECT_PROMPT = """You control a robot end-effector that pushes colored blocks on a table by instructing it with short natural language commands.
@@ -100,6 +125,13 @@ def parse_current_trajectory(turn_idx, traj_idx, curr_traj, max_turns):
             )
 
 
+def debug_append_prompt(prompt: str, phase: str, turn_idx: int, traj_idx: int) -> None:
+    with open("/gpfs/home/memmelma/projects/LaMer/tmp.txt", "a", encoding="utf-8") as f:
+        f.write(f"\n--- phase={phase} turn={turn_idx} traj={traj_idx} ---\n")
+        f.write(prompt)
+        f.write("\n"*5)
+
+
 def get_language_table_prompt(
     phase: str = "play",
     turn_idx: int = 0,
@@ -129,4 +161,6 @@ def get_language_table_prompt(
             init_observation=init_observation,
             current_trajectory=current_trajectory,
         )
-    return prompt.strip()
+    out = prompt.strip()
+    # debug_append_prompt(out, phase, turn_idx, traj_idx)
+    return out
