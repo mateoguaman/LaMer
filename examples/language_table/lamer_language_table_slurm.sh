@@ -13,6 +13,14 @@ val_data_size=${VAL_NUM_ENVS:-128}
 group_size=${GROUP_SIZE:-8}
 num_attempts=${NUM_ATTEMPTS:-3}
 max_turns=${MAX_TURNS:-5}
+learning_rate=${LEARNING_RATE:-1e-6}
+batch_size=${BATCH_SIZE:-64}
+micro_batch_size=${MICRO_BATCH_SIZE:-16}
+use_kl_loss=${USE_KL_LOSS:-False}
+kl_loss_coef=${KL_LOSS_COEF:-0.001}
+kl_loss_type=${KL_LOSS_TYPE:-low_var_kl}
+use_kl_in_reward=${USE_KL_IN_REWARD:-False}
+kl_reward_coef=${KL_REWARD_COEF:-0.001}
 mode="mean_norm"
 reflection_type="history_and_reflection"
 
@@ -22,7 +30,7 @@ val_address="${VAL_ADDRESS:-127.0.0.1:50052}"
 # data.truncation='error' => 'left' \
 # data.max_prompt_length=2048 \
 python3 -m verl.trainer.main_ppo \
-    algorithm.adv_estimator=gigpo \
+    algorithm.adv_estimator=grpo \
     data.train_files=${TRAIN_DATA_PATH:?'Set TRAIN_DATA_PATH'} \
     data.val_files=${VAL_DATA_PATH:?'Set VAL_DATA_PATH'} \
     data.train_batch_size=$train_data_size \
@@ -34,12 +42,13 @@ python3 -m verl.trainer.main_ppo \
     data.return_raw_chat=True \
     actor_rollout_ref.model.path=Qwen/Qwen3-4B \
     +actor_rollout_ref.model.enable_thinking=False \
-    actor_rollout_ref.actor.optim.lr=1e-6 \
+    actor_rollout_ref.actor.optim.lr=$learning_rate \
     actor_rollout_ref.model.use_remove_padding=True \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=16 \
-    actor_rollout_ref.actor.use_kl_loss=False \
-    actor_rollout_ref.actor.kl_loss_type=low_var_kl \
+    actor_rollout_ref.actor.ppo_mini_batch_size=$batch_size \
+    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=$micro_batch_size \
+    actor_rollout_ref.actor.use_kl_loss=$use_kl_loss \
+    actor_rollout_ref.actor.kl_loss_coef=$kl_loss_coef \
+    actor_rollout_ref.actor.kl_loss_type=$kl_loss_type \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
@@ -59,7 +68,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.5 \
-    algorithm.use_kl_in_reward=False \
+    algorithm.use_kl_in_reward=$use_kl_in_reward \
+    algorithm.kl_ctrl.kl_coef=$kl_reward_coef \
     algorithm.gamma=0.95 \
     +algorithm.step_gamma=0.95 \
     +algorithm.traj_gamma=0.9 \

@@ -12,3 +12,4 @@ lamer-*.err
 .env.azure.secrets
 logs/
 checkpoints/
+*.csv
