@@ -58,7 +58,7 @@ if [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
 fi
 
 # Preprocessing mode for _build_batch: "original", "batched_tf", or "jax_gpu"
-PREPROCESS_MODE="${PREPROCESS_MODE:-batched_tf}"
+PREPROCESS_MODE="${PREPROCESS_MODE:-jax_gpu}"
 
 ######################
 ### Setup ############
@@ -151,29 +151,26 @@ else
     VLA_FLAG="--policy gemini"
 fi
 
-# Unified env server (background)
-# Single process serves both train and val on separate ports, sharing one
-# LAVA model on GPU ${ENV_SERVER_GPU} with MEM_FRACTION=0.9.
-TOTAL_WORKERS=$((TRAIN_NUM_ENVS * GROUP_SIZE + VAL_NUM_ENVS))
-echo "Starting unified env server (train=${TRAIN_PORT}, val=${VAL_PORT}, ${TOTAL_WORKERS} total workers, GPU ${ENV_SERVER_GPU})..."
+# Train server (background)
+TRAIN_WORKERS=$((TRAIN_NUM_ENVS * GROUP_SIZE))
+echo "Starting train server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=${TRAIN_WORKERS} workers, GPU ${ENV_SERVER_GPU})..."
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
 JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.9 \
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.7 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
-    --unified \
-    --host 0.0.0.0 --train_port ${TRAIN_PORT} --val_port ${VAL_PORT} \
-    --train_num_envs ${TRAIN_NUM_ENVS} --train_group_n ${GROUP_SIZE} \
-    --val_num_envs ${VAL_NUM_ENVS} --val_group_n 1 \
+    --host 0.0.0.0 --port ${TRAIN_PORT} \
+    --num_envs ${TRAIN_NUM_ENVS} --group_n ${GROUP_SIZE} \
     --block_mode ${BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
     --reward_type ${REWARD_TYPE} \
     --preprocess_mode ${PREPROCESS_MODE} \
+    --split train \
     ${VLA_FLAG} \
     &
 TRAIN_SERVER_PID=$!
-echo "Training server PID: ${TRAIN_SERVER_PID} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=$((TRAIN_NUM_ENVS * GROUP_SIZE)) workers)"
+echo "Train server PID: ${TRAIN_SERVER_PID}"
 
 # Validation server (background, group_n=1 — no grouping for eval)
 echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
@@ -188,6 +185,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
     --reward_type ${REWARD_TYPE} \
+    --preprocess_mode ${PREPROCESS_MODE} \
     --split val \
     ${VLA_FLAG} \
     &
@@ -212,10 +210,12 @@ cleanup() {
     local exit_code=$?
     echo "[$(date)] cleanup() called — exit_code=${exit_code}, signal=${RECEIVED_SIGNAL:-none}"
     [ -n "${MEM_MONITOR_PID}" ] && kill ${MEM_MONITOR_PID} 2>/dev/null || true
-    echo "Cleaning up env server..."
-    kill ${ENV_SERVER_PID} 2>/dev/null || true
-    wait ${ENV_SERVER_PID} 2>/dev/null || true
-    echo "Server stopped."
+    echo "Cleaning up env servers..."
+    kill ${TRAIN_SERVER_PID} 2>/dev/null || true
+    kill ${VAL_SERVER_PID} 2>/dev/null || true
+    wait ${TRAIN_SERVER_PID} 2>/dev/null || true
+    wait ${VAL_SERVER_PID} 2>/dev/null || true
+    echo "Servers stopped."
     if [ -n "${RECEIVED_SIGNAL}" ]; then
         echo "[$(date)] Job terminated by signal: ${RECEIVED_SIGNAL}"
         exit 1
