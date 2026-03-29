@@ -141,6 +141,13 @@ class LanguageTableEnvironmentManager:
         """Close the remote connection."""
         self._remote.close()
 
+    def get_last_benchmark_stats(self):
+        """Return benchmark timing metadata from the wrapped remote client."""
+        getter = getattr(self._remote, "get_last_benchmark_stats", None)
+        if getter is None:
+            return {}
+        return getter()
+
     # ------------------------------------------------------------------
     # Play phase
     # ------------------------------------------------------------------
@@ -273,8 +280,20 @@ def make_envs(config):
         - remote_address: "host:port" for training server
         - remote_val_address: "host:port" for validation server
     """
-    train_remote = RemoteEnvironmentManager(config.env.remote_address)
-    val_remote = RemoteEnvironmentManager(config.env.remote_val_address)
+    if config.env.get("sharded", False):
+        from agent_system.environments.remote import ShardedRemoteEnvironmentManager
+
+        train_remote = ShardedRemoteEnvironmentManager(list(config.env.remote_addresses))
+        val_remote = ShardedRemoteEnvironmentManager(list(config.env.remote_val_addresses))
+
+        group_size = int(config.env.rollout.n)
+        train_remote.validate_group_partition(
+            group_size,
+            require_equal_groups_per_shard=True,
+        )
+    else:
+        train_remote = RemoteEnvironmentManager(config.env.remote_address)
+        val_remote = RemoteEnvironmentManager(config.env.remote_val_address)
 
     envs = LanguageTableEnvironmentManager(train_remote, config)
     val_envs = LanguageTableEnvironmentManager(val_remote, config)

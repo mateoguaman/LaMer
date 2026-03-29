@@ -11,6 +11,7 @@ propagation needed in the synchronous training loop).
 """
 
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Tuple
 
@@ -82,6 +83,7 @@ class ShardedRemoteEnvironmentManager:
                 )
 
         self._executor = ThreadPoolExecutor(max_workers=self._num_shards)
+        self._last_benchmark_stats: dict = {}
         logger.info(
             "ShardedRemoteEnvironmentManager: %d shards, "
             "shard_sizes=%s, total_num_processes=%d",
@@ -108,32 +110,139 @@ class ShardedRemoteEnvironmentManager:
     def do_reflection(self) -> bool:
         return self._do_reflection
 
+    @property
+    def shard_sizes(self) -> List[int]:
+        """Return per-shard ``num_processes`` sizes."""
+        return list(self._shard_sizes)
+
+    @property
+    def num_shards(self) -> int:
+        return self._num_shards
+
+    @property
+    def shard_ranges(self) -> List[Tuple[int, int]]:
+        """Return inclusive-exclusive global index ranges for each shard."""
+        return [
+            (start, start + size)
+            for start, size in zip(self._boundaries, self._shard_sizes)
+        ]
+
+    def shard_index_for_process(self, process_idx: int) -> int:
+        """Return which shard owns a given global env-process index."""
+        if process_idx < 0 or process_idx >= self._total_num_processes:
+            raise IndexError(
+                f"process_idx={process_idx} is out of bounds for "
+                f"{self._total_num_processes} processes"
+            )
+
+        for shard_idx, (start, end) in enumerate(self.shard_ranges):
+            if start <= process_idx < end:
+                return shard_idx
+
+        raise RuntimeError(
+            f"Could not resolve shard for process_idx={process_idx} with "
+            f"shard_ranges={self.shard_ranges}"
+        )
+
+    def validate_group_partition(
+        self,
+        group_size: int,
+        require_equal_groups_per_shard: bool = False,
+    ) -> Dict[str, object]:
+        """Validate that shard boundaries never split a contiguous group.
+
+        This is the key invariant for grouped env rollouts where global worker
+        layout is ``[group0_member0, ..., group0_memberK, group1_member0, ...]``.
+        Because sharding slices contiguous ranges, every shard boundary must land
+        exactly on a multiple of ``group_size`` to keep a whole group on one
+        shard.
+        """
+        if group_size <= 0:
+            raise ValueError(f"group_size must be positive, got {group_size}")
+
+        if self._total_num_processes % group_size != 0:
+            raise ValueError(
+                "Total num_processes must be divisible by the group size. "
+                f"group_size={group_size}, "
+                f"total_num_processes={self._total_num_processes}"
+            )
+
+        groups_per_shard = []
+        for shard_idx, shard_size in enumerate(self._shard_sizes):
+            if shard_size % group_size != 0:
+                raise ValueError(
+                    "Shard boundary splits a contiguous env group. "
+                    f"group_size={group_size}, shard_idx={shard_idx}, "
+                    f"shard_size={shard_size}, shard_ranges={self.shard_ranges}"
+                )
+            groups_per_shard.append(shard_size // group_size)
+
+        if require_equal_groups_per_shard and len(set(groups_per_shard)) != 1:
+            raise ValueError(
+                "Shards must own the same number of groups. "
+                f"group_size={group_size}, groups_per_shard={groups_per_shard}, "
+                f"shard_sizes={self._shard_sizes}"
+            )
+
+        return {
+            "group_size": int(group_size),
+            "total_num_processes": int(self._total_num_processes),
+            "total_groups": int(self._total_num_processes // group_size),
+            "groups_per_shard": [int(v) for v in groups_per_shard],
+            "shard_sizes": [int(v) for v in self._shard_sizes],
+            "shard_ranges": list(self.shard_ranges),
+        }
+
     # ------------------------------------------------------------------
     # Environment interface
     # ------------------------------------------------------------------
 
     def reset(self):
         """Returns ``(observations_dict, infos_list)``."""
+        call_t0 = time.perf_counter()
         results = self._parallel_call("reset")
-        return self._merge_obs_infos(results)
+        merged = self._merge_obs_infos(results)
+        self._last_benchmark_stats = self._build_benchmark_stats(
+            method="reset",
+            client_round_trip_s=time.perf_counter() - call_t0,
+        )
+        return merged
 
     def step(self, text_actions: List[str], phase: str = "play"):
         """Returns ``(next_obs_dict, rewards, dones, infos)``."""
+        call_t0 = time.perf_counter()
         sliced_actions = self._slice_list(text_actions)
         results = self._parallel_call_with_args(
             "step", sliced_actions, phase=phase,
         )
-        return self._merge_step_results(results)
+        merged = self._merge_step_results(results)
+        self._last_benchmark_stats = self._build_benchmark_stats(
+            method=f"step:{phase}",
+            client_round_trip_s=time.perf_counter() - call_t0,
+        )
+        return merged
 
     def restart(self):
         """Returns ``(observations_dict, infos_list)``."""
+        call_t0 = time.perf_counter()
         results = self._parallel_call("restart")
-        return self._merge_obs_infos(results)
+        merged = self._merge_obs_infos(results)
+        self._last_benchmark_stats = self._build_benchmark_stats(
+            method="restart",
+            client_round_trip_s=time.perf_counter() - call_t0,
+        )
+        return merged
 
     def reflect(self):
         """Returns ``(observations_dict, infos_list)``."""
+        call_t0 = time.perf_counter()
         results = self._parallel_call("reflect")
-        return self._merge_obs_infos(results)
+        merged = self._merge_obs_infos(results)
+        self._last_benchmark_stats = self._build_benchmark_stats(
+            method="reflect",
+            client_round_trip_s=time.perf_counter() - call_t0,
+        )
+        return merged
 
     def success_evaluator(self, **kwargs):
         """Returns ``Dict[str, np.ndarray]``."""
@@ -180,6 +289,10 @@ class ShardedRemoteEnvironmentManager:
             except Exception:
                 pass
         self._executor.shutdown(wait=False)
+
+    def get_last_benchmark_stats(self):
+        """Return benchmark timing metadata for the most recent sharded call."""
+        return dict(self._last_benchmark_stats)
 
     # ------------------------------------------------------------------
     # Internals
@@ -287,6 +400,27 @@ class ShardedRemoteEnvironmentManager:
         for sub in lists_of_lists:
             merged.extend(sub)
         return merged
+
+    def _build_benchmark_stats(self, method: str, client_round_trip_s: float):
+        """Aggregate the latest per-shard timing metadata."""
+        shard_stats = [shard.get_last_benchmark_stats() for shard in self._shards]
+        stats = {
+            "kind": "remote_call_sharded",
+            "method": method,
+            "n_shards": int(self._num_shards),
+            "client_round_trip_s": float(client_round_trip_s),
+            "shards": shard_stats,
+        }
+        server_elapsed_candidates = [
+            shard_stat.get("server_elapsed_s")
+            for shard_stat in shard_stats
+            if isinstance(shard_stat, dict) and shard_stat.get("server_elapsed_s") is not None
+        ]
+        if server_elapsed_candidates:
+            server_elapsed_s = max(float(v) for v in server_elapsed_candidates)
+            stats["server_elapsed_s"] = server_elapsed_s
+            stats["transport_overhead_s"] = float(client_round_trip_s - server_elapsed_s)
+        return stats
 
     # ------------------------------------------------------------------
     # Cleanup

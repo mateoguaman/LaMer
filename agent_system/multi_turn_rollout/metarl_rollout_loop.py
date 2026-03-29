@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import logging
+import time
 import torch
 import numpy as np
 from verl import DataProto
@@ -50,6 +51,17 @@ class TrajectoryCollector:
             self.enable_thinking = config.model.get('enable_thinking', False)
         else:
             self.enable_thinking = False
+
+    def _benchmark_enabled(self) -> bool:
+        return bool(self.config.get("benchmark", {}).get("enabled", False))
+
+    @staticmethod
+    def _safe_env_benchmark_stats(envs) -> Dict:
+        getter = getattr(envs, "get_last_benchmark_stats", None)
+        if getter is None:
+            return {}
+        stats = getter()
+        return stats if isinstance(stats, dict) else {}
 
     def preprocess_single_sample(
         self,
@@ -304,9 +316,15 @@ class TrajectoryCollector:
             success (Dict[str, np.ndarray]): Success samples for each environment
             traj_uid (np.ndarray): Trajectory unique identifiers
         """
+        benchmark_enabled = self._benchmark_enabled()
+        rollout_t0 = time.perf_counter()
+
         # Initial observations from the environment
         num_attempts = envs.num_attempts
+        reset_t0 = time.perf_counter()
         obs, infos = envs.reset()
+        reset_elapsed_s = time.perf_counter() - reset_t0
+        reset_benchmark_stats = self._safe_env_benchmark_stats(envs)
 
         # Initialize trajectory collection
         lenght_obs = len(obs['text']) if obs['text'] is not None else len(obs['image'])
@@ -335,6 +353,14 @@ class TrajectoryCollector:
         total_infos = [[] for _ in range(batch_size)]
         episode_lengths = np.zeros(batch_size, dtype=np.int32)
         _vla_step_stats = []  # collects per-outer-step VLA health stats
+        benchmark_trace = {
+            "reset": {
+                "elapsed_s": float(reset_elapsed_s),
+                "remote": reset_benchmark_stats,
+            },
+            "events": [],
+            "turns": [],
+        } if benchmark_enabled else None
 
         phase_and_steps = []
         for attempt_idx in range(num_attempts):
@@ -350,22 +376,48 @@ class TrajectoryCollector:
         logger.info("Rollout plan: %s", phase_and_steps)
         for attempt_idx, phase, steps in phase_and_steps:
             if phase == 'reflect':
+                reflect_t0 = time.perf_counter()
                 obs, infos = envs.reflect()
+                reflect_elapsed_s = time.perf_counter() - reflect_t0
                 # !IMPORTANT: do early stop here
                 # is_done = np.zeros(batch_size, dtype=bool)
                 is_done = is_won.copy()
+                if benchmark_enabled:
+                    benchmark_trace["events"].append(
+                        {
+                            "kind": "phase_event",
+                            "event": "reflect",
+                            "attempt_idx": int(attempt_idx),
+                            "elapsed_s": float(reflect_elapsed_s),
+                            "remote": self._safe_env_benchmark_stats(envs),
+                        }
+                    )
 
             if phase == 'play' and attempt_idx > 0:
+                restart_t0 = time.perf_counter()
                 obs, infos = envs.restart()
+                restart_elapsed_s = time.perf_counter() - restart_t0
                 # !IMPORTANT: do early stop here
                 # is_done = np.zeros(batch_size, dtype=bool)
                 is_done = is_won.copy()
+                if benchmark_enabled:
+                    benchmark_trace["events"].append(
+                        {
+                            "kind": "phase_event",
+                            "event": "restart",
+                            "attempt_idx": int(attempt_idx),
+                            "elapsed_s": float(restart_elapsed_s),
+                            "remote": self._safe_env_benchmark_stats(envs),
+                        }
+                    )
 
             # Trajectory collection loop
             for _step in range(steps):
                 active_masks = np.logical_not(is_done)
 
+                preprocess_t0 = time.perf_counter()
                 batch = self.preprocess_batch(gen_batch=gen_batch, obs=obs)
+                preprocess_elapsed_s = time.perf_counter() - preprocess_t0
 
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
                 non_tensor_batch_keys_to_pop = ["raw_prompt_ids"]
@@ -383,7 +435,9 @@ class TrajectoryCollector:
                 batch_input.meta_info = gen_batch.meta_info
                 batch_input.non_tensor_batch['active_masks'] = active_masks
 
+                generation_t0 = time.perf_counter()
                 batch_output = actor_rollout_wg.generate_sequences_agent(batch_input)
+                generation_elapsed_s = time.perf_counter() - generation_t0
 
                 batch.non_tensor_batch['uid'] = uid_batch
                 batch.non_tensor_batch['traj_uid'] = traj_uid
@@ -395,11 +449,27 @@ class TrajectoryCollector:
                 
                 text_actions = self.tokenizer.batch_decode(batch.batch['responses'], skip_special_tokens=True)
                 
+                env_step_t0 = time.perf_counter()
                 next_obs, rewards, dones, infos = envs.step(text_actions, phase=phase)
+                env_step_elapsed_s = time.perf_counter() - env_step_t0
+                env_benchmark_stats = self._safe_env_benchmark_stats(envs)
 
                 # Collect VLA health stats if present (from language_table env server)
                 if infos and "vla_stats" in infos[0]:
                     _vla_step_stats.append(infos[0]["vla_stats"])
+                if benchmark_enabled:
+                    benchmark_trace["turns"].append(
+                        {
+                            "attempt_idx": int(attempt_idx),
+                            "phase": phase,
+                            "turn_idx": int(_step),
+                            "n_active": int(active_masks.sum()),
+                            "preprocess_s": float(preprocess_elapsed_s),
+                            "generation_s": float(generation_elapsed_s),
+                            "env_step_s": float(env_step_elapsed_s),
+                            "remote": env_benchmark_stats,
+                        }
+                    )
 
                 if len(rewards.shape) == 2:
                     rewards = rewards.squeeze(1)
@@ -488,7 +558,10 @@ class TrajectoryCollector:
             inner_vals = [s.get("vla/n_inner_steps", 0) for s in _vla_step_stats]
             vla_metrics["vla/total_inner_steps"] = float(sum(inner_vals))
 
-        return total_batch_list, episode_lengths, success, traj_uid, traj_cot_logs, vla_metrics
+        if benchmark_enabled:
+            benchmark_trace["rollout_elapsed_s"] = float(time.perf_counter() - rollout_t0)
+
+        return total_batch_list, episode_lengths, success, traj_uid, traj_cot_logs, vla_metrics, benchmark_trace
     
     def multi_turn_loop(
             self,
@@ -511,7 +584,7 @@ class TrajectoryCollector:
         """
         num_attempts = envs.num_attempts
         # Initial observations from the environment
-        total_batch_list, total_episode_lengths, total_success, total_traj_uid, traj_cot_logs, vla_metrics = \
+        total_batch_list, total_episode_lengths, total_success, total_traj_uid, traj_cot_logs, vla_metrics, benchmark_trace = \
             self.vanilla_multi_turn_loop(
             gen_batch=gen_batch,
             actor_rollout_wg=actor_rollout_wg,
@@ -538,6 +611,10 @@ class TrajectoryCollector:
             if gen_batch_output.meta_info is None:
                 gen_batch_output.meta_info = {}
             gen_batch_output.meta_info["vla_metrics"] = vla_metrics
+        if benchmark_trace:
+            if gen_batch_output.meta_info is None:
+                gen_batch_output.meta_info = {}
+            gen_batch_output.meta_info["benchmark_rollout_trace"] = benchmark_trace
 
         logger.info("Rollout finished")
         return gen_batch_output, traj_cot_logs

@@ -293,6 +293,14 @@ trainer:
 ray_init:
   num_cpus: null # `None` means using all CPUs, which might cause hang if limited in systems like SLURM. Please set to a number allowed then.
 
+benchmark:
+  enabled: False
+  profile: compare
+  preset_name: null
+  output_dir: null
+  warmup_iterations: 3
+  measured_iterations: 5
+
 
 env:
   env_name: Sokoban #alfworld/AlfredTWEnv

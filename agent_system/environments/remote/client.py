@@ -40,6 +40,7 @@ class RemoteEnvironmentManager:
         self._port = int(port_str)
         self._timeout = timeout
         self._socket: socket.socket | None = None
+        self._last_benchmark_stats: dict = {}
 
         self._connect()
 
@@ -76,19 +77,57 @@ class RemoteEnvironmentManager:
 
     def reset(self):
         """Returns ``(observations_dict, infos_list)``."""
-        return self._call("reset")
+        call_t0 = time.perf_counter()
+        observations, infos = self._call("reset")
+        elapsed_s = time.perf_counter() - call_t0
+        server_payloads = self._extract_benchmark_payloads(infos)
+        self._last_benchmark_stats = self._build_benchmark_stats(
+            method="reset",
+            client_round_trip_s=elapsed_s,
+            server_payloads=server_payloads,
+        )
+        return observations, infos
 
     def step(self, text_actions, phase="play"):
         """Returns ``(next_obs_dict, rewards, dones, infos)``."""
-        return self._call("step", text_actions, phase=phase)
+        call_t0 = time.perf_counter()
+        observations, rewards, dones, infos = self._call(
+            "step", text_actions, phase=phase,
+        )
+        elapsed_s = time.perf_counter() - call_t0
+        server_payloads = self._extract_benchmark_payloads(infos)
+        self._last_benchmark_stats = self._build_benchmark_stats(
+            method=f"step:{phase}",
+            client_round_trip_s=elapsed_s,
+            server_payloads=server_payloads,
+        )
+        return observations, rewards, dones, infos
 
     def restart(self):
         """Returns ``(observations_dict, infos_list)``."""
-        return self._call("restart")
+        call_t0 = time.perf_counter()
+        observations, infos = self._call("restart")
+        elapsed_s = time.perf_counter() - call_t0
+        server_payloads = self._extract_benchmark_payloads(infos)
+        self._last_benchmark_stats = self._build_benchmark_stats(
+            method="restart",
+            client_round_trip_s=elapsed_s,
+            server_payloads=server_payloads,
+        )
+        return observations, infos
 
     def reflect(self):
         """Returns ``(observations_dict, infos_list)``."""
-        return self._call("reflect")
+        call_t0 = time.perf_counter()
+        observations, infos = self._call("reflect")
+        elapsed_s = time.perf_counter() - call_t0
+        server_payloads = self._extract_benchmark_payloads(infos)
+        self._last_benchmark_stats = self._build_benchmark_stats(
+            method="reflect",
+            client_round_trip_s=elapsed_s,
+            server_payloads=server_payloads,
+        )
+        return observations, infos
 
     def success_evaluator(self, **kwargs):
         """Evaluate episode success locally (no TCP round-trip needed).
@@ -132,6 +171,10 @@ class RemoteEnvironmentManager:
         except Exception:
             pass
         self._socket = None
+
+    def get_last_benchmark_stats(self):
+        """Return benchmark timing metadata for the most recent remote call."""
+        return dict(self._last_benchmark_stats)
 
     # ------------------------------------------------------------------
     # Connection management
@@ -214,6 +257,36 @@ class RemoteEnvironmentManager:
         raise ConnectionError(
             f"Failed to call '{method}' after {_MAX_RETRIES} retries"
         ) from last_exc
+
+    def _extract_benchmark_payloads(self, infos):
+        """Remove benchmark payloads from info dicts and return them."""
+        payloads = []
+        if not isinstance(infos, list):
+            return payloads
+        for info in infos:
+            if isinstance(info, dict) and "benchmark_env" in info:
+                payloads.append(info.pop("benchmark_env"))
+        return payloads
+
+    def _build_benchmark_stats(self, method: str, client_round_trip_s: float, server_payloads):
+        """Build a compact timing record for the last remote call."""
+        stats = {
+            "kind": "remote_call",
+            "method": method,
+            "server_address": f"{self._host}:{self._port}",
+            "client_round_trip_s": float(client_round_trip_s),
+            "server_payloads": server_payloads,
+        }
+        server_elapsed_candidates = [
+            payload.get("server_elapsed_s")
+            for payload in server_payloads
+            if isinstance(payload, dict) and payload.get("server_elapsed_s") is not None
+        ]
+        if server_elapsed_candidates:
+            server_elapsed_s = max(float(v) for v in server_elapsed_candidates)
+            stats["server_elapsed_s"] = server_elapsed_s
+            stats["transport_overhead_s"] = float(client_round_trip_s - server_elapsed_s)
+        return stats
 
     # ------------------------------------------------------------------
     # Cleanup

@@ -381,6 +381,59 @@ def _timer(name: str, timing_raw: Dict[str, float]):
     timing_raw[name] += timer.last
 
 
+def _benchmark_jsonify(value):
+    """Convert benchmark records into JSON-serializable Python types."""
+    if isinstance(value, dict):
+        return {str(k): _benchmark_jsonify(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_benchmark_jsonify(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 1:
+            return value.item()
+        return value.detach().cpu().tolist()
+    return value
+
+
+def _benchmark_percentile(values, q):
+    if not values:
+        return 0.0
+    return float(np.percentile(np.asarray(values, dtype=np.float64), q))
+
+
+def _summarize_benchmark_records(records):
+    """Aggregate measured iteration records into a compact summary."""
+    measured = [record for record in records if not record.get("is_warmup", False)]
+    timing_keys = sorted(
+        {
+            key
+            for record in measured
+            for key in record.get("timing_raw", {}).keys()
+        }
+    )
+    rollout_values = [
+        record.get("rollout_trace", {}).get("rollout_elapsed_s", 0.0)
+        for record in measured
+        if record.get("rollout_trace")
+    ]
+    summary = {
+        "iterations_total": int(len(records)),
+        "iterations_measured": int(len(measured)),
+        "iterations_warmup": int(len(records) - len(measured)),
+        "timing_s_mean": {},
+        "timing_s_p95": {},
+    }
+    for key in timing_keys:
+        vals = [float(record["timing_raw"].get(key, 0.0)) for record in measured]
+        summary["timing_s_mean"][key] = float(np.mean(vals)) if vals else 0.0
+        summary["timing_s_p95"][key] = _benchmark_percentile(vals, 95)
+    if rollout_values:
+        summary["rollout_elapsed_s_mean"] = float(np.mean(rollout_values))
+        summary["rollout_elapsed_s_p95"] = _benchmark_percentile(rollout_values, 95)
+    return summary
+
+
 class RayPPOTrainer:
     """
     Note that this trainer runs on the driver process on a single CPU/GPU node.
@@ -1126,6 +1179,48 @@ class RayPPOTrainer:
             config=OmegaConf.to_container(self.config, resolve=True),
         )
 
+        benchmark_cfg = self.config.get("benchmark", {})
+        benchmark_enabled = bool(benchmark_cfg.get("enabled", False))
+        benchmark_records = []
+        benchmark_output_dir = None
+        benchmark_iterations_path = None
+        benchmark_summary_path = None
+        benchmark_target_iterations = (
+            int(benchmark_cfg.get("warmup_iterations", 1)) +
+            int(benchmark_cfg.get("measured_iterations", 3))
+        )
+        if benchmark_enabled:
+            benchmark_output_dir = benchmark_cfg.get("output_dir") or os.path.join(
+                self.config.trainer.default_local_dir, "benchmark",
+            )
+            os.makedirs(benchmark_output_dir, exist_ok=True)
+            benchmark_iterations_path = os.path.join(
+                benchmark_output_dir, "benchmark_iterations.jsonl",
+            )
+            benchmark_summary_path = os.path.join(
+                benchmark_output_dir, "benchmark_summary.json",
+            )
+            with open(benchmark_iterations_path, "w", encoding="utf-8") as fh:
+                fh.write("")
+            with open(
+                os.path.join(benchmark_output_dir, "benchmark_metadata.json"),
+                "w",
+                encoding="utf-8",
+            ) as fh:
+                json.dump(
+                    _benchmark_jsonify(
+                        {
+                            "profile": benchmark_cfg.get("profile", "compare"),
+                            "preset_name": benchmark_cfg.get("preset_name"),
+                            "warmup_iterations": int(benchmark_cfg.get("warmup_iterations", 1)),
+                            "measured_iterations": int(benchmark_cfg.get("measured_iterations", 3)),
+                            "config": OmegaConf.to_container(self.config, resolve=True),
+                        }
+                    ),
+                    fh,
+                    indent=2,
+                )
+
         self.global_steps = 0
 
         # load checkpoint before doing anything
@@ -1215,6 +1310,10 @@ class RayPPOTrainer:
                     # Extract VLA health metrics (from language_table env server)
                     # so they get logged to wandb alongside training metrics.
                     vla_metrics = batch.meta_info.pop("vla_metrics", None) if batch.meta_info else None
+                    benchmark_rollout_trace = (
+                        batch.meta_info.pop("benchmark_rollout_trace", None)
+                        if batch.meta_info else None
+                    )
                     if vla_metrics:
                         metrics.update(vla_metrics)
 
@@ -1409,13 +1508,64 @@ class RayPPOTrainer:
                 # TODO: implement actual tflpo and theoretical tflpo
                 n_gpus = self.resource_pool_manager.get_n_gpus()
                 metrics.update(compute_throughout_metrics(batch=batch, timing_raw=timing_raw, n_gpus=n_gpus))
+                if benchmark_enabled:
+                    benchmark_record = _benchmark_jsonify(
+                        {
+                            "global_step": int(self.global_steps),
+                            "epoch": int(epoch),
+                            "is_warmup": len(benchmark_records) < int(benchmark_cfg.get("warmup_iterations", 1)),
+                            "timing_raw": timing_raw,
+                            "rollout_trace": benchmark_rollout_trace,
+                            "vla_metrics": vla_metrics or {},
+                            "metrics": {
+                                key: metrics[key]
+                                for key in (
+                                    "episode/reward/mean",
+                                    "episode/length/mean",
+                                    "response_length/mean",
+                                    "prompt_length/mean",
+                                    "timing_s/step",
+                                    "timing_s/gen",
+                                    "timing_s/old_log_prob",
+                                    "timing_s/adv",
+                                    "timing_s/update_actor",
+                                )
+                                if key in metrics
+                            },
+                        }
+                    )
+                    benchmark_records.append(benchmark_record)
+                    with open(benchmark_iterations_path, "a", encoding="utf-8") as fh:
+                        fh.write(json.dumps(benchmark_record) + "\n")
 
                 # TODO: make a canonical logger that supports various backend
                 logger.log(data=metrics, step=self.global_steps)
 
                 progress_bar.update(1)
                 self.global_steps += 1
+                if benchmark_enabled and len(benchmark_records) >= benchmark_target_iterations:
+                    summary = _benchmark_jsonify(
+                        {
+                            "profile": benchmark_cfg.get("profile", "compare"),
+                            "preset_name": benchmark_cfg.get("preset_name"),
+                            **_summarize_benchmark_records(benchmark_records),
+                        }
+                    )
+                    with open(benchmark_summary_path, "w", encoding="utf-8") as fh:
+                        json.dump(summary, fh, indent=2)
+                    progress_bar.close()
+                    return
                 if is_last_step:
                     pprint(f"Final validation metrics: {last_val_metrics}")
+                    if benchmark_enabled:
+                        summary = _benchmark_jsonify(
+                            {
+                                "profile": benchmark_cfg.get("profile", "compare"),
+                                "preset_name": benchmark_cfg.get("preset_name"),
+                                **_summarize_benchmark_records(benchmark_records),
+                            }
+                        )
+                        with open(benchmark_summary_path, "w", encoding="utf-8") as fh:
+                            json.dump(summary, fh, indent=2)
                     progress_bar.close()
                     return

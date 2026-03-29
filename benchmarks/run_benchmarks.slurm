@@ -55,11 +55,22 @@ VLA_CHECKPOINT_DIR_ARG="$(dirname "${VLA_CHECKPOINT}")"
 BENCH_OUTPUT_DIR="${BENCH_OUTPUT_DIR:-${LAMER_DIR}/benchmarks/results/$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "${BENCH_OUTPUT_DIR}"
 
-# Which benchmarks to run (comma-separated: vla,envs,outer)
-BENCHMARKS="${BENCHMARKS:-vla,envs,outer}"
+# Which benchmarks to run (comma-separated: sharded_smoke,benchmark_end_to_end,vla,envs,outer)
+BENCHMARKS="${BENCHMARKS:-benchmark_end_to_end}"
 
-# Preprocess modes for VLA benchmark (original, batched_tf, jax_gpu)
-PREPROCESS_MODES="${PREPROCESS_MODES:-original}"
+# End-to-end benchmark config
+TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-$HOME/data/verl-agent/text/train.parquet}"
+VAL_DATA_PATH="${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}"
+BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-3}"
+BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-5}"
+BENCH_TRACE_INNER_STEPS="${BENCH_TRACE_INNER_STEPS:-0}"
+BENCH_ENV_SERVER_GPU="${BENCH_ENV_SERVER_GPU:-4}"
+BENCH_TRAINER_VISIBLE_GPUS="${BENCH_TRAINER_VISIBLE_GPUS:-0,1,2,3}"
+BENCH_RAY_NUM_CPUS="${BENCH_RAY_NUM_CPUS:-${SLURM_CPUS_PER_TASK:-64}}"
+
+# VLA-only preprocess modes for the standalone VLA benchmark
+VLA_PREPROCESS_MODES="${VLA_PREPROCESS_MODES:-original}"
+PREPROCESS_MODE="${PREPROCESS_MODE:-jax_gpu}"
 
 # Outer-loop model
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-4B}"
@@ -85,6 +96,9 @@ export NCCL_ASYNC_ERROR_HANDLING=1
 export HF_HUB_ETAG_TIMEOUT=60
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+if [ -n "${HF_TOKEN:-}" ]; then
+    export HUGGINGFACE_HUB_TOKEN="${HUGGINGFACE_HUB_TOKEN:-${HF_TOKEN}}"
+fi
 export TF_CPP_MIN_LOG_LEVEL=2
 export GRPC_VERBOSITY=ERROR
 
@@ -110,6 +124,13 @@ echo "VLA_CHECKPOINT: ${VLA_CHECKPOINT}"
 echo "MODEL_PATH: ${MODEL_PATH}"
 echo "OUTPUT: ${BENCH_OUTPUT_DIR}"
 echo "BENCHMARKS: ${BENCHMARKS}"
+echo "TRAIN_DATA_PATH: ${TRAIN_DATA_PATH}"
+echo "VAL_DATA_PATH: ${VAL_DATA_PATH}"
+echo "BENCH_WARMUP_ITERATIONS: ${BENCH_WARMUP_ITERATIONS}"
+echo "BENCH_MEASURED_ITERATIONS: ${BENCH_MEASURED_ITERATIONS}"
+echo "BENCH_ENV_SERVER_GPU: ${BENCH_ENV_SERVER_GPU}"
+echo "BENCH_TRAINER_VISIBLE_GPUS: ${BENCH_TRAINER_VISIBLE_GPUS}"
+echo "PREPROCESS_MODE: ${PREPROCESS_MODE}"
 echo ""
 
 # GPU info
@@ -117,16 +138,78 @@ nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
 echo ""
 
 # GPU assignments
-ENV_SERVER_GPU=0
-TRAIN_GPUS="1,2,3,4"
+ENV_SERVER_GPU="${BENCH_ENV_SERVER_GPU}"
+TRAIN_GPUS="${BENCH_TRAINER_VISIBLE_GPUS}"
 
 ########################################
-### Benchmark 1: VLA Inference #########
+### Benchmark 0: Sharded Smoke #########
+########################################
+if echo "${BENCHMARKS}" | grep -q "sharded_smoke"; then
+    echo ""
+    echo "============================================"
+    echo "BENCHMARK 0: Sharded Remote Smoke Test"
+    echo "============================================"
+    echo "Running live sharded remote smoke test with ${LANGTABLE_PYTHON}..."
+
+    SHARDED_SMOKE_OUTPUT_DIR="${BENCH_OUTPUT_DIR}/sharded_smoke"
+    mkdir -p "${SHARDED_SMOKE_OUTPUT_DIR}"
+
+    LANGTABLE_PYTHON="${LANGTABLE_PYTHON}" \
+    LANGTABLE_DIR="${LANGTABLE_DIR}" \
+    python "${LAMER_DIR}/scripts/test_sharded_grouping_smoke.py" \
+        --test live_remote_roundtrip \
+        2>&1 | tee "${SHARDED_SMOKE_OUTPUT_DIR}/live_remote_roundtrip.log"
+
+    echo "Sharded remote smoke test complete."
+fi
+
+########################################
+### Benchmark 1: End-to-End ###########
+########################################
+if echo "${BENCHMARKS}" | grep -q "benchmark_end_to_end"; then
+    echo ""
+    echo "============================================"
+    echo "BENCHMARK 1: End-to-End Training"
+    echo "============================================"
+    echo "Running benchmark_end_to_end.py on trainer GPUs ${TRAIN_GPUS} with env server GPU(s) ${ENV_SERVER_GPU}..."
+
+    END_TO_END_OUTPUT_DIR="${BENCH_OUTPUT_DIR}/benchmark_end_to_end"
+    mkdir -p "${END_TO_END_OUTPUT_DIR}"
+
+    BENCH_CMD=(
+        python "${LAMER_DIR}/benchmarks/benchmark_end_to_end.py"
+        --mode spawn
+        --preset resolved_training_config
+        --train-data "${TRAIN_DATA_PATH}"
+        --val-data "${VAL_DATA_PATH}"
+        --output-dir "${END_TO_END_OUTPUT_DIR}"
+        --model-path "${MODEL_PATH}"
+        --preprocess-mode "${PREPROCESS_MODE}"
+        --warmup-iterations "${BENCH_WARMUP_ITERATIONS}"
+        --measured-iterations "${BENCH_MEASURED_ITERATIONS}"
+        --langtable-python "${LANGTABLE_PYTHON}"
+        --langtable-dir "${LANGTABLE_DIR}"
+        --vla-checkpoint "${VLA_CHECKPOINT}"
+        --env-server-gpu "${ENV_SERVER_GPU}"
+        --trainer-visible-gpus "${TRAIN_GPUS}"
+        --ray-num-cpus "${BENCH_RAY_NUM_CPUS}"
+    )
+    if [ "${BENCH_TRACE_INNER_STEPS}" = "1" ]; then
+        BENCH_CMD+=(--benchmark-trace-inner-steps)
+    fi
+
+    "${BENCH_CMD[@]}" 2>&1 | tee "${END_TO_END_OUTPUT_DIR}/benchmark_end_to_end.log"
+
+    echo "End-to-end benchmark complete."
+fi
+
+########################################
+### Benchmark 2: VLA Inference #########
 ########################################
 if echo "${BENCHMARKS}" | grep -q "vla"; then
     echo ""
     echo "============================================"
-    echo "BENCHMARK 1: VLA (LAVA) Inference"
+    echo "BENCHMARK 2: VLA (LAVA) Inference"
     echo "============================================"
     echo "Testing batch sizes on GPU ${ENV_SERVER_GPU}..."
 
@@ -137,19 +220,19 @@ if echo "${BENCHMARKS}" | grep -q "vla"; then
         --checkpoint_dir "${VLA_CHECKPOINT_DIR_ARG}" \
         --batch_sizes "1,2,4,8,16,32,64,128,256,512,1024,2048,4096" \
         --num_warmup 3 --num_iters 20 \
-        --modes "${PREPROCESS_MODES}" \
+        --modes "${VLA_PREPROCESS_MODES}" \
         2>&1 | tee "${BENCH_OUTPUT_DIR}/vla_inference.log"
 
     echo "VLA benchmark complete."
 fi
 
 ########################################
-### Benchmark 2: Env Scaling ###########
+### Benchmark 3: Env Scaling ###########
 ########################################
 if echo "${BENCHMARKS}" | grep -q "envs"; then
     echo ""
     echo "============================================"
-    echo "BENCHMARK 2: Environment Scaling"
+    echo "BENCHMARK 3: Environment Scaling"
     echo "============================================"
     echo "Testing environment counts on GPU ${ENV_SERVER_GPU}..."
 
@@ -168,12 +251,12 @@ if echo "${BENCHMARKS}" | grep -q "envs"; then
 fi
 
 ########################################
-### Benchmark 3: Outer-Loop LLM ########
+### Benchmark 4: Outer-Loop LLM ########
 ########################################
 if echo "${BENCHMARKS}" | grep -q "outer"; then
     echo ""
     echo "============================================"
-    echo "BENCHMARK 3: Outer-Loop LLM (single GPU)"
+    echo "BENCHMARK 4: Outer-Loop LLM (single GPU)"
     echo "============================================"
     echo "Testing on GPU 1 (single GPU, no FSDP)..."
 

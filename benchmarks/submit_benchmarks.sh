@@ -5,8 +5,9 @@
 #
 # Usage:
 #   bash benchmarks/submit_benchmarks.sh
-#   BENCHMARKS=vla bash benchmarks/submit_benchmarks.sh
-#   BENCHMARKS=outer bash benchmarks/submit_benchmarks.sh -- --time=1:00:00
+#   BENCHMARKS=benchmark_end_to_end bash benchmarks/submit_benchmarks.sh
+#   BENCHMARKS=sharded_smoke bash benchmarks/submit_benchmarks.sh
+#   BENCHMARKS=benchmark_end_to_end,vla bash benchmarks/submit_benchmarks.sh -- --time=6:00:00
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,8 +28,18 @@ export LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-ltvenv}"
 export LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
 export VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
 export VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
-export BENCHMARKS="${BENCHMARKS:-vla,envs,outer}"
-export PREPROCESS_MODES="${PREPROCESS_MODES:-original}"
+export TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-$HOME/data/verl-agent/text/train.parquet}"
+export VAL_DATA_PATH="${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}"
+export BENCHMARKS="${BENCHMARKS:-benchmark_end_to_end}"
+export BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-3}"
+export BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-5}"
+export BENCH_TRACE_INNER_STEPS="${BENCH_TRACE_INNER_STEPS:-0}"
+export BENCH_ENV_SERVER_GPU="${BENCH_ENV_SERVER_GPU:-4}"
+export BENCH_TRAINER_VISIBLE_GPUS="${BENCH_TRAINER_VISIBLE_GPUS:-0,1,2,3}"
+export BENCH_RAY_NUM_CPUS="${BENCH_RAY_NUM_CPUS:-${SLURM_CPUS_PER_TASK:-64}}"
+export BENCH_OUTPUT_DIR="${BENCH_OUTPUT_DIR:-}"
+export VLA_PREPROCESS_MODES="${VLA_PREPROCESS_MODES:-original}"
+export PREPROCESS_MODE="${PREPROCESS_MODE:-jax_gpu}"
 export MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-4B}"
 export SLURM_LOG_DIR="${SLURM_LOG_DIR:-}"
 
@@ -72,8 +83,16 @@ echo "  LANGTABLE_DIR=${LANGTABLE_DIR}"
 echo "  LANGTABLE_CONDA_ENV=${LANGTABLE_CONDA_ENV}"
 echo "  VLA_CHECKPOINT_DIR=${VLA_CHECKPOINT_DIR}"
 echo "  VLA_CHECKPOINT=${VLA_CHECKPOINT}"
+echo "  TRAIN_DATA_PATH=${TRAIN_DATA_PATH}"
+echo "  VAL_DATA_PATH=${VAL_DATA_PATH}"
 echo "  BENCHMARKS=${BENCHMARKS}"
-echo "  PREPROCESS_MODES=${PREPROCESS_MODES}"
+echo "  BENCH_WARMUP_ITERATIONS=${BENCH_WARMUP_ITERATIONS}"
+echo "  BENCH_MEASURED_ITERATIONS=${BENCH_MEASURED_ITERATIONS}"
+echo "  BENCH_ENV_SERVER_GPU=${BENCH_ENV_SERVER_GPU}"
+echo "  BENCH_TRAINER_VISIBLE_GPUS=${BENCH_TRAINER_VISIBLE_GPUS}"
+echo "  BENCH_OUTPUT_DIR=${BENCH_OUTPUT_DIR:-<default>}"
+echo "  VLA_PREPROCESS_MODES=${VLA_PREPROCESS_MODES}"
+echo "  PREPROCESS_MODE=${PREPROCESS_MODE}"
 echo "  MODEL_PATH=${MODEL_PATH}"
 echo "  SLURM_LOG_DIR=${SLURM_LOG_DIR:-<default: cwd>}"
 
