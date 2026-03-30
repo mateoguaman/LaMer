@@ -28,24 +28,23 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LANGTABLE_DIR = REPO_ROOT.parent / "language-table"
 DEFAULT_RESULTS_DIR = REPO_ROOT / "benchmarks" / "results"
 
-PRESETS = {
-    "doc_baseline": {
-        "train_num_envs": 16,
-        "val_num_envs": 128,
-        "group_size": 8,
-        "num_attempts": 2,
-        "max_turns": 4,
-        "max_inner_steps": 96,
-    },
-    "resolved_training_config": {
-        "train_num_envs": 16,
-        "val_num_envs": 128,
-        "group_size": 8,
-        "num_attempts": 3,
-        "max_turns": 4,
-        "max_inner_steps": 96,
-    },
+PRESET_NAMES = ("doc_baseline", "resolved_training_config")
+DOC_BASELINE_PRESET = {
+    "train_num_envs": 16,
+    "val_num_envs": 128,
+    "group_size": 8,
+    "num_attempts": 2,
+    "max_turns": 4,
+    "max_inner_steps": 96,
 }
+
+
+def _env_int(name: str, default: int) -> int:
+    return int(os.environ.get(name, str(default)))
+
+
+def _env_float(name: str, default: float) -> float:
+    return float(os.environ.get(name, str(default)))
 
 
 def _hydra_list(items: list[str]) -> str:
@@ -55,6 +54,44 @@ def _hydra_list(items: list[str]) -> str:
 
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _append_multistep_task_flags(args, cmd: list[str], split: str) -> None:
+    if args.reward_type != "multistep":
+        return
+
+    if split == "train":
+        locations = args.train_task_locations
+        shapes = args.train_task_shapes
+        colors = args.train_task_colors
+        n_steps = args.train_task_n_steps
+    else:
+        locations = args.val_task_locations
+        shapes = args.val_task_shapes
+        colors = args.val_task_colors
+        n_steps = args.val_task_n_steps
+
+    if locations:
+        cmd.extend(["--task_locations", locations])
+    if shapes:
+        cmd.extend(["--task_shapes", shapes])
+    if colors:
+        cmd.extend(["--task_colors", colors])
+    cmd.extend(["--task_n_steps", str(n_steps)])
+
+
+def _resolve_training_shape(args) -> dict[str, int]:
+    if args.preset == "doc_baseline":
+        return dict(DOC_BASELINE_PRESET)
+
+    return {
+        "train_num_envs": int(args.train_num_envs),
+        "val_num_envs": int(args.val_num_envs),
+        "group_size": int(args.group_size),
+        "num_attempts": int(args.num_attempts),
+        "max_turns": int(args.max_turns),
+        "max_inner_steps": int(args.max_inner_steps),
+    }
 
 
 def _wait_for_port(host: str, port: int, timeout_s: float) -> None:
@@ -112,6 +149,7 @@ def _build_server_cmd(
         cmd.append("--do_reflection")
     if args.vla_checkpoint:
         cmd.extend(["--vla_checkpoint", args.vla_checkpoint])
+    _append_multistep_task_flags(args, cmd, split)
     return cmd
 
 
@@ -173,7 +211,7 @@ def _build_trainer_cmd(
         sys.executable,
         "-m",
         "verl.trainer.main_ppo",
-        "algorithm.adv_estimator=gigpo",
+        f"algorithm.adv_estimator={args.adv_estimator}",
         f"data.train_files={args.train_data}",
         f"data.val_files={args.val_data}",
         f"data.train_batch_size={args.train_num_envs}",
@@ -189,7 +227,9 @@ def _build_trainer_cmd(
         "actor_rollout_ref.model.use_remove_padding=True",
         f"actor_rollout_ref.actor.ppo_mini_batch_size={args.batch_size}",
         f"actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu={args.micro_batch_size}",
-        "actor_rollout_ref.actor.use_kl_loss=False",
+        f"actor_rollout_ref.actor.use_kl_loss={args.use_kl_loss}",
+        f"actor_rollout_ref.actor.kl_loss_coef={args.kl_loss_coef}",
+        f"actor_rollout_ref.actor.kl_loss_type={args.kl_loss_type}",
         "actor_rollout_ref.model.enable_gradient_checkpointing=True",
         "actor_rollout_ref.actor.fsdp_config.param_offload=True",
         "actor_rollout_ref.actor.fsdp_config.optimizer_offload=True",
@@ -209,13 +249,9 @@ def _build_trainer_cmd(
         "actor_rollout_ref.ref.fsdp_config.param_offload=True",
         "actor_rollout_ref.actor.use_invalid_action_penalty=True",
         "actor_rollout_ref.actor.invalid_action_penalty_coef=0.5",
-        "algorithm.use_kl_in_reward=False",
-        "algorithm.kl_ctrl.kl_coef=0.001",
+        f"algorithm.use_kl_in_reward={args.use_kl_in_reward}",
+        f"algorithm.kl_ctrl.kl_coef={args.kl_reward_coef}",
         "algorithm.gamma=0.95",
-        "+algorithm.step_gamma=0.95",
-        "+algorithm.traj_gamma=0.9",
-        "algorithm.gigpo.step_advantage_w=1.0",
-        "algorithm.gigpo.mode=mean_norm",
         "reward_model.reward_manager=episode",
         "env.env_name=language_table",
         "env.seed=0",
@@ -249,6 +285,16 @@ def _build_trainer_cmd(
         f"benchmark.warmup_iterations={args.warmup_iterations}",
         f"benchmark.measured_iterations={args.measured_iterations}",
     ]
+
+    if args.adv_estimator == "gigpo":
+        cmd.extend(
+            [
+                "+algorithm.step_gamma=0.95",
+                "+algorithm.traj_gamma=0.9",
+                "algorithm.gigpo.step_advantage_w=1.0",
+                "algorithm.gigpo.mode=mean_norm",
+            ]
+        )
 
     if len(train_addresses) > 1 or len(val_addresses) > 1:
         cmd.extend(
@@ -290,29 +336,49 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Benchmark LaMer Language Table end-to-end training"
     )
-    parser.add_argument("--preset", choices=sorted(PRESETS), default="resolved_training_config")
+    parser.add_argument("--preset", choices=PRESET_NAMES, default="resolved_training_config")
     parser.add_argument("--mode", choices=["attach", "spawn"], default="attach")
     parser.add_argument("--train-data", default=os.environ.get("TRAIN_DATA_PATH"))
     parser.add_argument("--val-data", default=os.environ.get("VAL_DATA_PATH"))
     parser.add_argument("--output-dir", default=None)
-    parser.add_argument("--run-name", default=None)
-    parser.add_argument("--model-path", default="Qwen/Qwen3-4B")
-    parser.add_argument("--learning-rate", type=float, default=1e-6)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--micro-batch-size", type=int, default=16)
+    parser.add_argument("--run-name", default=os.environ.get("RUN_NAME"))
+    parser.add_argument("--model-path", default=os.environ.get("MODEL_PATH", "Qwen/Qwen3-4B"))
+    parser.add_argument("--adv-estimator", default=os.environ.get("ADV_ESTIMATOR", "gigpo"))
+    parser.add_argument("--learning-rate", type=float, default=_env_float("LEARNING_RATE", 1e-6))
+    parser.add_argument("--batch-size", type=int, default=_env_int("BATCH_SIZE", 64))
+    parser.add_argument("--micro-batch-size", type=int, default=_env_int("MICRO_BATCH_SIZE", 16))
+    parser.add_argument("--use-kl-loss", default=os.environ.get("USE_KL_LOSS", "False"))
+    parser.add_argument("--kl-loss-coef", type=float, default=_env_float("KL_LOSS_COEF", 0.001))
+    parser.add_argument("--kl-loss-type", default=os.environ.get("KL_LOSS_TYPE", "low_var_kl"))
+    parser.add_argument("--use-kl-in-reward", default=os.environ.get("USE_KL_IN_REWARD", "False"))
+    parser.add_argument("--kl-reward-coef", type=float, default=_env_float("KL_REWARD_COEF", 0.001))
     parser.add_argument(
         "--preprocess-mode",
         choices=["original", "batched_tf", "jax_gpu"],
-        default="jax_gpu",
+        default=os.environ.get("PREPROCESS_MODE", "jax_gpu"),
     )
-    parser.add_argument("--reward-type", default="block2block")
+    parser.add_argument("--reward-type", default=os.environ.get("REWARD_TYPE", "block2block"))
     parser.add_argument("--block-mode", default="BLOCK_4")
+    parser.add_argument("--train-num-envs", type=int, default=_env_int("TRAIN_NUM_ENVS", 4))
+    parser.add_argument("--val-num-envs", type=int, default=_env_int("VAL_NUM_ENVS", 4))
+    parser.add_argument("--group-size", type=int, default=_env_int("GROUP_SIZE", 8))
+    parser.add_argument("--max-inner-steps", type=int, default=_env_int("MAX_INNER_STEPS", 5))
+    parser.add_argument("--num-attempts", type=int, default=_env_int("NUM_ATTEMPTS", 2))
+    parser.add_argument("--max-turns", type=int, default=_env_int("MAX_TURNS", 2))
     parser.add_argument("--warmup-iterations", type=int, default=3)
     parser.add_argument("--measured-iterations", type=int, default=5)
     parser.add_argument("--do-reflection", dest="do_reflection", action="store_true")
     parser.add_argument("--no-reflection", dest="do_reflection", action="store_false")
     parser.set_defaults(do_reflection=True)
     parser.add_argument("--benchmark-trace-inner-steps", action="store_true")
+    parser.add_argument("--train-task-locations", default=os.environ.get("TRAIN_TASK_LOCATIONS"))
+    parser.add_argument("--train-task-shapes", default=os.environ.get("TRAIN_TASK_SHAPES"))
+    parser.add_argument("--train-task-colors", default=os.environ.get("TRAIN_TASK_COLORS"))
+    parser.add_argument("--train-task-n-steps", type=int, default=_env_int("TRAIN_TASK_N_STEPS", 2))
+    parser.add_argument("--val-task-locations", default=os.environ.get("VAL_TASK_LOCATIONS"))
+    parser.add_argument("--val-task-shapes", default=os.environ.get("VAL_TASK_SHAPES"))
+    parser.add_argument("--val-task-colors", default=os.environ.get("VAL_TASK_COLORS"))
+    parser.add_argument("--val-task-n-steps", type=int, default=_env_int("VAL_TASK_N_STEPS", 3))
     parser.add_argument("--train-addresses", default="127.0.0.1:50051")
     parser.add_argument("--val-addresses", default="127.0.0.1:50052")
     parser.add_argument("--host", default="127.0.0.1")
@@ -340,13 +406,13 @@ def main() -> int:
             "TRAIN_DATA_PATH / VAL_DATA_PATH)"
         )
 
-    preset = PRESETS[args.preset]
-    args.train_num_envs = preset["train_num_envs"]
-    args.val_num_envs = preset["val_num_envs"]
-    args.group_size = preset["group_size"]
-    args.num_attempts = preset["num_attempts"]
-    args.max_turns = preset["max_turns"]
-    args.max_inner_steps = preset["max_inner_steps"]
+    resolved_shape = _resolve_training_shape(args)
+    args.train_num_envs = resolved_shape["train_num_envs"]
+    args.val_num_envs = resolved_shape["val_num_envs"]
+    args.group_size = resolved_shape["group_size"]
+    args.num_attempts = resolved_shape["num_attempts"]
+    args.max_turns = resolved_shape["max_turns"]
+    args.max_inner_steps = resolved_shape["max_inner_steps"]
 
     output_dir = (
         Path(args.output_dir)

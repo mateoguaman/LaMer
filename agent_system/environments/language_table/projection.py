@@ -1,9 +1,49 @@
 import copy
 import logging
 import re
+import threading
 from typing import List
 
 logger = logging.getLogger(__name__)
+_INVALID_WARNING_LOCK = threading.Lock()
+_INVALID_WARNING_COUNT = 0
+_INVALID_WARNING_SUPPRESSED = 0
+_MAX_INVALID_WARNING_LOGS = 50
+_INVALID_WARNING_SUMMARY_EVERY = 100
+
+
+def _log_play_projection(i: int, valid: int, text: str, goal: str) -> None:
+    global _INVALID_WARNING_COUNT, _INVALID_WARNING_SUPPRESSED
+
+    if valid:
+        logger.debug(
+            "Projection env=%d phase=play valid=%d raw=%r goal=%r",
+            i,
+            valid,
+            text,
+            goal,
+        )
+        return
+
+    with _INVALID_WARNING_LOCK:
+        if _INVALID_WARNING_COUNT < _MAX_INVALID_WARNING_LOGS:
+            _INVALID_WARNING_COUNT += 1
+            logger.warning(
+                "Projection env=%d phase=play valid=%d raw=%r goal=%r",
+                i,
+                valid,
+                text,
+                goal,
+            )
+            return
+
+        _INVALID_WARNING_SUPPRESSED += 1
+        if _INVALID_WARNING_SUPPRESSED % _INVALID_WARNING_SUMMARY_EVERY == 0:
+            logger.warning(
+                "Projection invalid-output warnings suppressed=%d after first %d logs",
+                _INVALID_WARNING_SUPPRESSED,
+                _MAX_INVALID_WARNING_LOGS,
+            )
 
 
 def language_table_projection(actions: List[str], phase="play"):
@@ -59,10 +99,7 @@ def language_table_projection(actions: List[str], phase="play"):
                         # Still mark as invalid so the penalty applies
                         valids[i] = 0
 
-            logger.warning(
-                "Projection env=%d phase=play valid=%d raw=%r goal=%r",
-                i, valids[i], text, goals[i],
-            )
+            _log_play_projection(i, valids[i], text, goals[i])
 
         return goals, valids
 
