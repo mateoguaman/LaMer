@@ -30,11 +30,11 @@ DEFAULT_RESULTS_DIR = REPO_ROOT / "benchmarks" / "results"
 
 PRESET_NAMES = ("doc_baseline", "resolved_training_config")
 DOC_BASELINE_PRESET = {
-    "train_num_envs": 16,
-    "val_num_envs": 128,
-    "group_size": 8,
-    "num_attempts": 2,
-    "max_turns": 2,
+    "train_num_envs": 8,
+    "val_num_envs": 8,
+    "group_size": 16,
+    "num_attempts": 3,
+    "max_turns": 4,
     "max_inner_steps": 96,
 }
 
