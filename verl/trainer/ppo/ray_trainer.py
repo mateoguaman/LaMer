@@ -402,6 +402,86 @@ def _benchmark_percentile(values, q):
     return float(np.percentile(np.asarray(values, dtype=np.float64), q))
 
 
+def _benchmark_distribution(values):
+    if not values:
+        return {"mean": 0.0, "p50": 0.0, "p95": 0.0}
+    values = [float(value) for value in values]
+    return {
+        "mean": float(np.mean(values)),
+        "p50": _benchmark_percentile(values, 50),
+        "p95": _benchmark_percentile(values, 95),
+    }
+
+
+def _iter_remote_server_payloads(remote_stats):
+    if not isinstance(remote_stats, dict):
+        return
+
+    for payload in remote_stats.get("server_payloads", []):
+        if isinstance(payload, dict):
+            yield payload
+
+    for shard in remote_stats.get("shards", []) or []:
+        if not isinstance(shard, dict):
+            continue
+        for payload in shard.get("server_payloads", []):
+            if isinstance(payload, dict):
+                yield payload
+
+
+def _collect_remote_rollout_metrics(measured_records):
+    turn_server_elapsed = []
+    turn_transport_overhead = []
+    per_shard_server_elapsed = defaultdict(list)
+    payload_metrics = defaultdict(list)
+    payload_count = 0
+
+    for record in measured_records:
+        rollout_trace = record.get("rollout_trace") or {}
+        for turn in rollout_trace.get("turns", []):
+            remote_stats = turn.get("remote")
+            if not isinstance(remote_stats, dict):
+                continue
+
+            server_elapsed = remote_stats.get("server_elapsed_s")
+            if server_elapsed is not None:
+                turn_server_elapsed.append(float(server_elapsed))
+
+            transport_overhead = remote_stats.get("transport_overhead_s")
+            if transport_overhead is not None:
+                turn_transport_overhead.append(float(transport_overhead))
+
+            for shard_idx, shard_stats in enumerate(remote_stats.get("shards", []) or []):
+                if not isinstance(shard_stats, dict):
+                    continue
+                shard_server_elapsed = shard_stats.get("server_elapsed_s")
+                if shard_server_elapsed is not None:
+                    per_shard_server_elapsed[f"shard_{shard_idx}"].append(
+                        float(shard_server_elapsed)
+                    )
+
+            for payload in _iter_remote_server_payloads(remote_stats):
+                payload_count += 1
+                for key in (
+                    "vla_total_s",
+                    "env_step_total_s",
+                    "ray_dispatch_s",
+                    "ray_collect_s",
+                    "ray_unpack_s",
+                ):
+                    value = payload.get(key)
+                    if value is not None:
+                        payload_metrics[key].append(float(value))
+
+    return {
+        "turn_server_elapsed": turn_server_elapsed,
+        "turn_transport_overhead": turn_transport_overhead,
+        "per_shard_server_elapsed": dict(per_shard_server_elapsed),
+        "payload_metrics": dict(payload_metrics),
+        "payload_count": int(payload_count),
+    }
+
+
 def _summarize_benchmark_records(records):
     """Aggregate measured iteration records into a compact summary."""
     measured = [record for record in records if not record.get("is_warmup", False)]
@@ -422,15 +502,59 @@ def _summarize_benchmark_records(records):
         "iterations_measured": int(len(measured)),
         "iterations_warmup": int(len(records) - len(measured)),
         "timing_s_mean": {},
+        "timing_s_p50": {},
         "timing_s_p95": {},
+        "timing_notes": {
+            "gen": "Includes the full multi_turn_loop rollout collection block in this benchmark path.",
+        },
     }
     for key in timing_keys:
         vals = [float(record["timing_raw"].get(key, 0.0)) for record in measured]
-        summary["timing_s_mean"][key] = float(np.mean(vals)) if vals else 0.0
-        summary["timing_s_p95"][key] = _benchmark_percentile(vals, 95)
+        timing_distribution = _benchmark_distribution(vals)
+        summary["timing_s_mean"][key] = timing_distribution["mean"]
+        summary["timing_s_p50"][key] = timing_distribution["p50"]
+        summary["timing_s_p95"][key] = timing_distribution["p95"]
     if rollout_values:
-        summary["rollout_elapsed_s_mean"] = float(np.mean(rollout_values))
-        summary["rollout_elapsed_s_p95"] = _benchmark_percentile(rollout_values, 95)
+        rollout_distribution = _benchmark_distribution(rollout_values)
+        summary["rollout_elapsed_s_mean"] = rollout_distribution["mean"]
+        summary["rollout_elapsed_s_p50"] = rollout_distribution["p50"]
+        summary["rollout_elapsed_s_p95"] = rollout_distribution["p95"]
+
+    remote_metrics = _collect_remote_rollout_metrics(measured)
+    turn_server_elapsed = remote_metrics["turn_server_elapsed"]
+    if turn_server_elapsed:
+        server_distribution = _benchmark_distribution(turn_server_elapsed)
+        summary["env_server_elapsed_s_mean"] = server_distribution["mean"]
+        summary["env_server_elapsed_s_p50"] = server_distribution["p50"]
+        summary["env_server_elapsed_s_p95"] = server_distribution["p95"]
+
+    turn_transport_overhead = remote_metrics["turn_transport_overhead"]
+    if turn_transport_overhead:
+        transport_distribution = _benchmark_distribution(turn_transport_overhead)
+        summary["transport_overhead_s_mean"] = transport_distribution["mean"]
+        summary["transport_overhead_s_p50"] = transport_distribution["p50"]
+        summary["transport_overhead_s_p95"] = transport_distribution["p95"]
+
+    if remote_metrics["payload_count"]:
+        summary["server_payloads_measured"] = remote_metrics["payload_count"]
+    if turn_server_elapsed or turn_transport_overhead:
+        summary["measured_turns"] = int(
+            max(len(turn_server_elapsed), len(turn_transport_overhead))
+        )
+
+    payload_metrics = remote_metrics["payload_metrics"]
+    for key, values in sorted(payload_metrics.items()):
+        distribution = _benchmark_distribution(values)
+        summary[f"{key}_sum"] = float(np.sum(values))
+        summary[f"{key}_mean"] = distribution["mean"]
+
+    if remote_metrics["per_shard_server_elapsed"]:
+        summary["per_shard_server_elapsed_s"] = {
+            shard_name: _benchmark_distribution(values)
+            for shard_name, values in sorted(
+                remote_metrics["per_shard_server_elapsed"].items()
+            )
+        }
     return summary
 
 

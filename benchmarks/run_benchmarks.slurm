@@ -65,7 +65,9 @@ VAL_DATA_PATH="${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}"
 BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-2}"
 BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-3}"
 BENCH_TRACE_INNER_STEPS="${BENCH_TRACE_INNER_STEPS:-0}"
-BENCH_ENV_SERVER_GPU="${BENCH_ENV_SERVER_GPU:-4}"
+BENCH_TRAIN_SHARD_COUNTS="${BENCH_TRAIN_SHARD_COUNTS:-1,2,4}"
+BENCH_ENV_SERVER_GPUS="${BENCH_ENV_SERVER_GPUS:-${BENCH_ENV_SERVER_GPU:-4,5,6,7}}"
+BENCH_SKIP_VAL_SERVER="${BENCH_SKIP_VAL_SERVER:-1}"
 BENCH_TRAINER_VISIBLE_GPUS="${BENCH_TRAINER_VISIBLE_GPUS:-0,1,2,3}"
 BENCH_RAY_NUM_CPUS="${BENCH_RAY_NUM_CPUS:-${SLURM_CPUS_PER_TASK:-64}}"
 
@@ -157,7 +159,9 @@ echo "TRAIN_DATA_PATH: ${TRAIN_DATA_PATH}"
 echo "VAL_DATA_PATH: ${VAL_DATA_PATH}"
 echo "BENCH_WARMUP_ITERATIONS: ${BENCH_WARMUP_ITERATIONS}"
 echo "BENCH_MEASURED_ITERATIONS: ${BENCH_MEASURED_ITERATIONS}"
-echo "BENCH_ENV_SERVER_GPU: ${BENCH_ENV_SERVER_GPU}"
+echo "BENCH_TRAIN_SHARD_COUNTS: ${BENCH_TRAIN_SHARD_COUNTS}"
+echo "BENCH_ENV_SERVER_GPUS: ${BENCH_ENV_SERVER_GPUS}"
+echo "BENCH_SKIP_VAL_SERVER: ${BENCH_SKIP_VAL_SERVER}"
 echo "BENCH_TRAINER_VISIBLE_GPUS: ${BENCH_TRAINER_VISIBLE_GPUS}"
 echo "PREPROCESS_MODE: ${PREPROCESS_MODE}"
 echo "REWARD_TYPE: ${REWARD_TYPE}"
@@ -174,8 +178,27 @@ nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
 echo ""
 
 # GPU assignments
-ENV_SERVER_GPU="${BENCH_ENV_SERVER_GPU}"
+ENV_SERVER_GPU_POOL_CSV="${BENCH_ENV_SERVER_GPUS}"
+ENV_SERVER_GPU="${ENV_SERVER_GPU_POOL_CSV%%,*}"
 TRAIN_GPUS="${BENCH_TRAINER_VISIBLE_GPUS}"
+IFS=',' read -r -a ENV_SERVER_GPU_POOL <<< "${ENV_SERVER_GPU_POOL_CSV}"
+IFS=',' read -r -a TRAIN_SHARD_COUNTS <<< "${BENCH_TRAIN_SHARD_COUNTS}"
+
+if [ "${#ENV_SERVER_GPU_POOL[@]}" -eq 0 ]; then
+    echo "ERROR: BENCH_ENV_SERVER_GPUS must contain at least one GPU id."
+    exit 1
+fi
+if [ "${#TRAIN_SHARD_COUNTS[@]}" -eq 0 ]; then
+    echo "ERROR: BENCH_TRAIN_SHARD_COUNTS must contain at least one shard count."
+    exit 1
+fi
+
+join_first_n_csv() {
+    local count="$1"
+    local slice=("${ENV_SERVER_GPU_POOL[@]:0:${count}}")
+    local IFS=,
+    echo "${slice[*]}"
+}
 
 # Export the same training config variables the normal training launcher consumes,
 # so benchmark_end_to_end.py resolves from the live job config instead of a
@@ -219,34 +242,60 @@ if echo "${BENCHMARKS}" | grep -q "benchmark_end_to_end"; then
     echo "============================================"
     echo "BENCHMARK 1: End-to-End Training"
     echo "============================================"
-    echo "Running benchmark_end_to_end.py on trainer GPUs ${TRAIN_GPUS} with env server GPU(s) ${ENV_SERVER_GPU}..."
+    echo "Running benchmark_end_to_end.py on trainer GPUs ${TRAIN_GPUS} with env server GPU pool ${ENV_SERVER_GPU_POOL_CSV}..."
 
-    END_TO_END_OUTPUT_DIR="${BENCH_OUTPUT_DIR}/benchmark_end_to_end"
-    mkdir -p "${END_TO_END_OUTPUT_DIR}"
+    END_TO_END_ROOT_DIR="${BENCH_OUTPUT_DIR}/benchmark_end_to_end"
+    mkdir -p "${END_TO_END_ROOT_DIR}"
 
-    BENCH_CMD=(
-        python "${LAMER_DIR}/benchmarks/benchmark_end_to_end.py"
-        --mode spawn
-        --preset "${BENCH_END_TO_END_PRESET}"
-        --train-data "${TRAIN_DATA_PATH}"
-        --val-data "${VAL_DATA_PATH}"
-        --output-dir "${END_TO_END_OUTPUT_DIR}"
-        --model-path "${MODEL_PATH}"
-        --preprocess-mode "${PREPROCESS_MODE}"
-        --warmup-iterations "${BENCH_WARMUP_ITERATIONS}"
-        --measured-iterations "${BENCH_MEASURED_ITERATIONS}"
-        --langtable-python "${LANGTABLE_PYTHON}"
-        --langtable-dir "${LANGTABLE_DIR}"
-        --vla-checkpoint "${VLA_CHECKPOINT}"
-        --env-server-gpu "${ENV_SERVER_GPU}"
-        --trainer-visible-gpus "${TRAIN_GPUS}"
-        --ray-num-cpus "${BENCH_RAY_NUM_CPUS}"
-    )
-    if [ "${BENCH_TRACE_INNER_STEPS}" = "1" ]; then
-        BENCH_CMD+=(--benchmark-trace-inner-steps)
-    fi
+    for SHARD_COUNT_RAW in "${TRAIN_SHARD_COUNTS[@]}"; do
+        SHARD_COUNT="${SHARD_COUNT_RAW//[[:space:]]/}"
+        if ! [[ "${SHARD_COUNT}" =~ ^[0-9]+$ ]] || [ "${SHARD_COUNT}" -lt 1 ]; then
+            echo "ERROR: invalid shard count '${SHARD_COUNT_RAW}' in BENCH_TRAIN_SHARD_COUNTS=${BENCH_TRAIN_SHARD_COUNTS}"
+            exit 1
+        fi
+        if [ "${SHARD_COUNT}" -gt "${#ENV_SERVER_GPU_POOL[@]}" ]; then
+            echo "ERROR: shard count ${SHARD_COUNT} requires ${SHARD_COUNT} env GPUs, but BENCH_ENV_SERVER_GPUS only lists ${#ENV_SERVER_GPU_POOL[@]}"
+            exit 1
+        fi
 
-    "${BENCH_CMD[@]}" 2>&1 | tee "${END_TO_END_OUTPUT_DIR}/benchmark_end_to_end.log"
+        SHARD_ENV_SERVER_GPUS="$(join_first_n_csv "${SHARD_COUNT}")"
+        RUN_OUTPUT_DIR="${END_TO_END_ROOT_DIR}/shards_${SHARD_COUNT}"
+        mkdir -p "${RUN_OUTPUT_DIR}"
+
+        echo ""
+        echo "--- Shard sweep run: train_shards=${SHARD_COUNT} env_gpus=${SHARD_ENV_SERVER_GPUS} ---"
+
+        BENCH_CMD=(
+            python "${LAMER_DIR}/benchmarks/benchmark_end_to_end.py"
+            --mode spawn
+            --preset "${BENCH_END_TO_END_PRESET}"
+            --train-data "${TRAIN_DATA_PATH}"
+            --val-data "${VAL_DATA_PATH}"
+            --output-dir "${RUN_OUTPUT_DIR}"
+            --model-path "${MODEL_PATH}"
+            --preprocess-mode "${PREPROCESS_MODE}"
+            --warmup-iterations "${BENCH_WARMUP_ITERATIONS}"
+            --measured-iterations "${BENCH_MEASURED_ITERATIONS}"
+            --langtable-python "${LANGTABLE_PYTHON}"
+            --langtable-dir "${LANGTABLE_DIR}"
+            --vla-checkpoint "${VLA_CHECKPOINT}"
+            --env-server-gpu "${SHARD_ENV_SERVER_GPUS}"
+            --trainer-visible-gpus "${TRAIN_GPUS}"
+            --ray-num-cpus "${BENCH_RAY_NUM_CPUS}"
+        )
+        if [ "${BENCH_SKIP_VAL_SERVER}" = "1" ]; then
+            BENCH_CMD+=(--skip-val-server)
+        fi
+        if [ "${BENCH_TRACE_INNER_STEPS}" = "1" ]; then
+            BENCH_CMD+=(--benchmark-trace-inner-steps)
+        fi
+
+        "${BENCH_CMD[@]}" 2>&1 | tee "${RUN_OUTPUT_DIR}/benchmark_end_to_end.log"
+    done
+
+    python -m benchmarks.end_to_end_sweep \
+        --root-dir "${END_TO_END_ROOT_DIR}" \
+        2>&1 | tee "${END_TO_END_ROOT_DIR}/sweep_manifest.log"
 
     echo "End-to-end benchmark complete."
 fi

@@ -47,6 +47,13 @@ def _env_float(name: str, default: float) -> float:
     return float(os.environ.get(name, str(default)))
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() not in {"", "0", "false", "no", "off"}
+
+
 def _hydra_list(items: list[str]) -> str:
     quoted = ",".join(json.dumps(item) for item in items)
     return f"[{quoted}]"
@@ -54,6 +61,36 @@ def _hydra_list(items: list[str]) -> str:
 
 def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _validate_train_shard_layout(
+    train_num_envs: int,
+    group_size: int,
+    shard_count: int,
+) -> int:
+    if shard_count <= 0:
+        raise ValueError(f"shard_count must be positive, got {shard_count}")
+    if train_num_envs % shard_count != 0:
+        raise ValueError(
+            "TRAIN_NUM_ENVS must be divisible by the train shard count. "
+            f"train_num_envs={train_num_envs}, shard_count={shard_count}"
+        )
+    if group_size <= 0:
+        raise ValueError(f"group_size must be positive, got {group_size}")
+    if train_num_envs % group_size != 0:
+        raise ValueError(
+            "TRAIN_NUM_ENVS must be divisible by GROUP_SIZE. "
+            f"train_num_envs={train_num_envs}, group_size={group_size}"
+        )
+
+    train_envs_per_shard = train_num_envs // shard_count
+    if train_envs_per_shard % group_size != 0:
+        raise ValueError(
+            "Each shard must own a whole number of prompt groups. "
+            f"train_num_envs={train_num_envs}, shard_count={shard_count}, "
+            f"group_size={group_size}, train_envs_per_shard={train_envs_per_shard}"
+        )
+    return train_envs_per_shard
 
 
 def _append_multistep_task_flags(args, cmd: list[str], split: str) -> None:
@@ -296,21 +333,17 @@ def _build_trainer_cmd(
             ]
         )
 
+    if args.skip_val_server:
+        cmd.append("+env.skip_val_env=True")
+
     if len(train_addresses) > 1 or len(val_addresses) > 1:
-        cmd.extend(
-            [
-                "+env.sharded=True",
-                f"+env.remote_addresses={_hydra_list(train_addresses)}",
-                f"+env.remote_val_addresses={_hydra_list(val_addresses)}",
-            ]
-        )
+        cmd.extend(["+env.sharded=True", f"+env.remote_addresses={_hydra_list(train_addresses)}"])
+        if val_addresses:
+            cmd.append(f"+env.remote_val_addresses={_hydra_list(val_addresses)}")
     else:
-        cmd.extend(
-            [
-                f"+env.remote_address={train_addresses[0]}",
-                f"+env.remote_val_address={val_addresses[0]}",
-            ]
-        )
+        cmd.append(f"+env.remote_address={train_addresses[0]}")
+        if val_addresses:
+            cmd.append(f"+env.remote_val_address={val_addresses[0]}")
     return cmd
 
 
@@ -354,7 +387,7 @@ def main() -> int:
     parser.add_argument("--kl-reward-coef", type=float, default=_env_float("KL_REWARD_COEF", 0.001))
     parser.add_argument(
         "--preprocess-mode",
-        choices=["original", "batched_tf", "jax_gpu"],
+        choices=["original", "batched_tf", "jax_gpu", "jax_fused"],
         default=os.environ.get("PREPROCESS_MODE", "jax_gpu"),
     )
     parser.add_argument("--reward-type", default=os.environ.get("REWARD_TYPE", "block2block"))
@@ -370,6 +403,11 @@ def main() -> int:
     parser.add_argument("--do-reflection", dest="do_reflection", action="store_true")
     parser.add_argument("--no-reflection", dest="do_reflection", action="store_false")
     parser.set_defaults(do_reflection=True)
+    parser.add_argument("--skip-val-server", dest="skip_val_server", action="store_true")
+    parser.add_argument("--keep-val-server", dest="skip_val_server", action="store_false")
+    parser.set_defaults(
+        skip_val_server=_env_bool("BENCH_SKIP_VAL_SERVER", False)
+    )
     parser.add_argument("--benchmark-trace-inner-steps", action="store_true")
     parser.add_argument("--train-task-locations", default=os.environ.get("TRAIN_TASK_LOCATIONS"))
     parser.add_argument("--train-task-shapes", default=os.environ.get("TRAIN_TASK_SHAPES"))
@@ -428,15 +466,16 @@ def main() -> int:
         parser.error("--env-server-gpu must specify at least one GPU id")
 
     spawned = []
+    train_envs_per_shard = None
     if args.mode == "spawn":
-        if args.train_num_envs % len(env_server_gpus) != 0:
-            parser.error(
-                "For sharded Language Table benchmarking, TRAIN_NUM_ENVS must be "
-                "divisible by the number of env-server GPUs so each shard owns "
-                "the same number of prompt groups."
+        try:
+            train_envs_per_shard = _validate_train_shard_layout(
+                train_num_envs=args.train_num_envs,
+                group_size=args.group_size,
+                shard_count=len(env_server_gpus),
             )
-
-        train_envs_per_shard = args.train_num_envs // len(env_server_gpus)
+        except ValueError as exc:
+            parser.error(str(exc))
         train_addresses = []
         used_ports = set()
         for idx, gpu_id in enumerate(env_server_gpus):
@@ -464,31 +503,62 @@ def main() -> int:
             _wait_for_port(args.host, train_port, args.startup_timeout)
             train_addresses.append(f"{args.host}:{train_port}")
 
-        val_gpu = env_server_gpus[0]
-        val_port = args.val_port
-        while val_port in used_ports:
-            val_port += 1
-        val_cmd = _build_server_cmd(
-            args,
-            port=val_port,
-            num_envs=args.val_num_envs,
-            group_n=1,
-            split="val",
-        )
-        spawned.append(
-            _spawn_server(
+        if args.skip_val_server:
+            val_addresses = []
+        else:
+            val_gpu = env_server_gpus[0]
+            val_port = args.val_port
+            while val_port in used_ports:
+                val_port += 1
+            val_cmd = _build_server_cmd(
                 args,
-                val_cmd,
-                output_dir / "val_env_server.log",
-                extra_env={
-                    "CUDA_VISIBLE_DEVICES": val_gpu,
-                    "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-                    "XLA_PYTHON_CLIENT_MEM_FRACTION": args.val_server_mem_fraction,
-                },
+                port=val_port,
+                num_envs=args.val_num_envs,
+                group_n=1,
+                split="val",
             )
-        )
-        _wait_for_port(args.host, val_port, args.startup_timeout)
-        val_addresses = [f"{args.host}:{val_port}"]
+            spawned.append(
+                _spawn_server(
+                    args,
+                    val_cmd,
+                    output_dir / "val_env_server.log",
+                    extra_env={
+                        "CUDA_VISIBLE_DEVICES": val_gpu,
+                        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                        "XLA_PYTHON_CLIENT_MEM_FRACTION": args.val_server_mem_fraction,
+                    },
+                )
+            )
+            _wait_for_port(args.host, val_port, args.startup_timeout)
+            val_addresses = [f"{args.host}:{val_port}"]
+    elif args.skip_val_server:
+        val_addresses = []
+
+    launcher_metadata = {
+        "preset": args.preset,
+        "mode": args.mode,
+        "preprocess_mode": args.preprocess_mode,
+        "train_num_envs": int(args.train_num_envs),
+        "val_num_envs": int(args.val_num_envs),
+        "group_size": int(args.group_size),
+        "train_shard_count": int(len(train_addresses)),
+        "train_envs_per_shard": (
+            int(train_envs_per_shard)
+            if train_envs_per_shard is not None
+            else (
+                int(args.train_num_envs // len(train_addresses))
+                if train_addresses and args.train_num_envs % len(train_addresses) == 0
+                else None
+            )
+        ),
+        "env_server_gpus": env_server_gpus[: len(train_addresses)],
+        "skip_val_server": bool(args.skip_val_server),
+        "val_server_enabled": bool(val_addresses),
+        "train_addresses": list(train_addresses),
+        "val_addresses": list(val_addresses),
+    }
+    with (output_dir / "launcher_metadata.json").open("w", encoding="utf-8") as fh:
+        json.dump(launcher_metadata, fh, indent=2)
 
     trainer_cmd = _build_trainer_cmd(args, output_dir, train_addresses, val_addresses)
     print("Running trainer command:")

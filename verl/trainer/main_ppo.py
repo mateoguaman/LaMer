@@ -56,6 +56,15 @@ class TaskRunner:
 
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False))
+        skip_val_env = bool(config.env.get("skip_val_env", False))
+        if skip_val_env and (
+            config.trainer.get("val_before_train", True)
+            or int(config.trainer.get("test_freq", 0)) > 0
+        ):
+            raise ValueError(
+                "env.skip_val_env=True requires trainer.val_before_train=False "
+                "and trainer.test_freq=0"
+            )
 
         if config.env.get('remote', False) and 'language_table' in config.env.env_name.lower():
             # Language Table uses remote envs but needs LaMer-side prompt/projection
@@ -65,11 +74,15 @@ class TaskRunner:
             if config.env.get('sharded', False):
                 from agent_system.environments.remote import ShardedRemoteEnvironmentManager
                 envs = ShardedRemoteEnvironmentManager(list(config.env.remote_addresses))
-                val_envs = ShardedRemoteEnvironmentManager(list(config.env.remote_val_addresses))
+                val_envs = None
+                if not skip_val_env:
+                    val_envs = ShardedRemoteEnvironmentManager(list(config.env.remote_val_addresses))
             else:
                 from agent_system.environments.remote import RemoteEnvironmentManager
                 envs = RemoteEnvironmentManager(config.env.remote_address)
-                val_envs = RemoteEnvironmentManager(config.env.remote_val_address)
+                val_envs = None
+                if not skip_val_env:
+                    val_envs = RemoteEnvironmentManager(config.env.remote_val_address)
         else:
             if 'sokoban' in config.env.env_name.lower():
                 from agent_system.environments.sokoban import make_envs
@@ -173,7 +186,13 @@ class TaskRunner:
         reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, normalize_by_length=False)
 
         # Note that we always use function-based RM for validation
-        val_reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=1, normalize_by_length=False)
+        val_reward_fn = None
+        if not skip_val_env:
+            val_reward_fn = reward_manager_cls(
+                tokenizer=tokenizer,
+                num_examine=1,
+                normalize_by_length=False,
+            )
 
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 

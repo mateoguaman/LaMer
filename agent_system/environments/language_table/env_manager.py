@@ -278,13 +278,19 @@ def make_envs(config):
 
     Expects config.env to have:
         - remote_address: "host:port" for training server
-        - remote_val_address: "host:port" for validation server
+        - remote_val_address: "host:port" for validation server (optional when
+          config.env.skip_val_env=True)
     """
+    skip_val_env = bool(config.env.get("skip_val_env", False))
     if config.env.get("sharded", False):
         from agent_system.environments.remote import ShardedRemoteEnvironmentManager
 
         train_remote = ShardedRemoteEnvironmentManager(list(config.env.remote_addresses))
-        val_remote = ShardedRemoteEnvironmentManager(list(config.env.remote_val_addresses))
+        val_remote = None
+        if not skip_val_env:
+            val_remote = ShardedRemoteEnvironmentManager(
+                list(config.env.remote_val_addresses)
+            )
 
         group_size = int(config.env.rollout.n)
         train_remote.validate_group_partition(
@@ -293,8 +299,12 @@ def make_envs(config):
         )
     else:
         train_remote = RemoteEnvironmentManager(config.env.remote_address)
-        val_remote = RemoteEnvironmentManager(config.env.remote_val_address)
+        val_remote = None
+        if not skip_val_env:
+            val_remote = RemoteEnvironmentManager(config.env.remote_val_address)
 
     envs = LanguageTableEnvironmentManager(train_remote, config)
-    val_envs = LanguageTableEnvironmentManager(val_remote, config)
+    val_envs = None
+    if val_remote is not None:
+        val_envs = LanguageTableEnvironmentManager(val_remote, config)
     return envs, val_envs
