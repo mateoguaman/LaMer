@@ -68,6 +68,14 @@ def _validate_train_shard_layout(
     group_size: int,
     shard_count: int,
 ) -> int:
+    """Validate that prompt groups can be partitioned across shards.
+
+    ``TRAIN_NUM_ENVS`` is the number of prompt groups. Each group expands to
+    ``GROUP_SIZE`` env workers inside the language-table server via
+    ``num_processes = num_envs * group_n``. To keep every contiguous group on
+    one shard, we only need the number of prompt groups to divide evenly across
+    the requested shard count.
+    """
     if shard_count <= 0:
         raise ValueError(f"shard_count must be positive, got {shard_count}")
     if train_num_envs % shard_count != 0:
@@ -77,19 +85,8 @@ def _validate_train_shard_layout(
         )
     if group_size <= 0:
         raise ValueError(f"group_size must be positive, got {group_size}")
-    if train_num_envs % group_size != 0:
-        raise ValueError(
-            "TRAIN_NUM_ENVS must be divisible by GROUP_SIZE. "
-            f"train_num_envs={train_num_envs}, group_size={group_size}"
-        )
 
     train_envs_per_shard = train_num_envs // shard_count
-    if train_envs_per_shard % group_size != 0:
-        raise ValueError(
-            "Each shard must own a whole number of prompt groups. "
-            f"train_num_envs={train_num_envs}, shard_count={shard_count}, "
-            f"group_size={group_size}, train_envs_per_shard={train_envs_per_shard}"
-        )
     return train_envs_per_shard
 
 

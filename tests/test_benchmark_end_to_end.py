@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from omegaconf import OmegaConf
 
 from agent_system.environments.language_table.env_manager import make_envs
-from benchmarks.benchmark_end_to_end import _build_trainer_cmd
+from benchmarks.benchmark_end_to_end import _build_trainer_cmd, _validate_train_shard_layout
 from benchmarks.end_to_end_sweep import build_sweep_manifest
 from verl.trainer.ppo.ray_trainer import _summarize_benchmark_records
 
@@ -88,6 +88,37 @@ def test_language_table_make_envs_can_skip_val_env(monkeypatch):
     assert envs.num_processes == 32
     assert val_envs is None
     envs.close()
+
+
+def test_validate_train_shard_layout_uses_prompt_groups_not_worker_count():
+    assert _validate_train_shard_layout(
+        train_num_envs=8,
+        group_size=16,
+        shard_count=1,
+    ) == 8
+    assert _validate_train_shard_layout(
+        train_num_envs=8,
+        group_size=16,
+        shard_count=2,
+    ) == 4
+    assert _validate_train_shard_layout(
+        train_num_envs=8,
+        group_size=16,
+        shard_count=4,
+    ) == 2
+
+
+def test_validate_train_shard_layout_rejects_uneven_group_partition():
+    try:
+        _validate_train_shard_layout(
+            train_num_envs=10,
+            group_size=16,
+            shard_count=4,
+        )
+    except ValueError as exc:
+        assert "train shard count" in str(exc)
+    else:
+        raise AssertionError("Expected uneven prompt-group partition to fail")
 
 
 def test_summarize_benchmark_records_keeps_env_side_fields():
