@@ -34,7 +34,7 @@ DOC_BASELINE_PRESET = {
     "val_num_envs": 128,
     "group_size": 8,
     "num_attempts": 2,
-    "max_turns": 4,
+    "max_turns": 2,
     "max_inner_steps": 96,
 }
 
@@ -336,7 +336,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Benchmark LaMer Language Table end-to-end training"
     )
-    parser.add_argument("--preset", choices=PRESET_NAMES, default="resolved_training_config")
+    parser.add_argument("--preset", choices=PRESET_NAMES, default="doc_baseline")
     parser.add_argument("--mode", choices=["attach", "spawn"], default="attach")
     parser.add_argument("--train-data", default=os.environ.get("TRAIN_DATA_PATH"))
     parser.add_argument("--val-data", default=os.environ.get("VAL_DATA_PATH"))
@@ -365,8 +365,8 @@ def main() -> int:
     parser.add_argument("--max-inner-steps", type=int, default=_env_int("MAX_INNER_STEPS", 5))
     parser.add_argument("--num-attempts", type=int, default=_env_int("NUM_ATTEMPTS", 2))
     parser.add_argument("--max-turns", type=int, default=_env_int("MAX_TURNS", 2))
-    parser.add_argument("--warmup-iterations", type=int, default=3)
-    parser.add_argument("--measured-iterations", type=int, default=5)
+    parser.add_argument("--warmup-iterations", type=int, default=2)
+    parser.add_argument("--measured-iterations", type=int, default=3)
     parser.add_argument("--do-reflection", dest="do_reflection", action="store_true")
     parser.add_argument("--no-reflection", dest="do_reflection", action="store_false")
     parser.set_defaults(do_reflection=True)

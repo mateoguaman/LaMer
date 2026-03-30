@@ -57,12 +57,13 @@ mkdir -p "${BENCH_OUTPUT_DIR}"
 
 # Which benchmarks to run (comma-separated: sharded_smoke,benchmark_end_to_end,vla,envs,outer)
 BENCHMARKS="${BENCHMARKS:-benchmark_end_to_end}"
+BENCH_END_TO_END_PRESET="${BENCH_END_TO_END_PRESET:-doc_baseline}"
 
 # End-to-end benchmark config
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-$HOME/data/verl-agent/text/train.parquet}"
 VAL_DATA_PATH="${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}"
-BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-3}"
-BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-5}"
+BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-2}"
+BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-3}"
 BENCH_TRACE_INNER_STEPS="${BENCH_TRACE_INNER_STEPS:-0}"
 BENCH_ENV_SERVER_GPU="${BENCH_ENV_SERVER_GPU:-4}"
 BENCH_TRAINER_VISIBLE_GPUS="${BENCH_TRAINER_VISIBLE_GPUS:-0,1,2,3}"
@@ -151,6 +152,7 @@ echo "VLA_CHECKPOINT: ${VLA_CHECKPOINT}"
 echo "MODEL_PATH: ${MODEL_PATH}"
 echo "OUTPUT: ${BENCH_OUTPUT_DIR}"
 echo "BENCHMARKS: ${BENCHMARKS}"
+echo "BENCH_END_TO_END_PRESET: ${BENCH_END_TO_END_PRESET}"
 echo "TRAIN_DATA_PATH: ${TRAIN_DATA_PATH}"
 echo "VAL_DATA_PATH: ${VAL_DATA_PATH}"
 echo "BENCH_WARMUP_ITERATIONS: ${BENCH_WARMUP_ITERATIONS}"
@@ -225,7 +227,7 @@ if echo "${BENCHMARKS}" | grep -q "benchmark_end_to_end"; then
     BENCH_CMD=(
         python "${LAMER_DIR}/benchmarks/benchmark_end_to_end.py"
         --mode spawn
-        --preset resolved_training_config
+        --preset "${BENCH_END_TO_END_PRESET}"
         --train-data "${TRAIN_DATA_PATH}"
         --val-data "${VAL_DATA_PATH}"
         --output-dir "${END_TO_END_OUTPUT_DIR}"

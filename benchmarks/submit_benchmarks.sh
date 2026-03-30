@@ -6,6 +6,7 @@
 # Usage:
 #   bash benchmarks/submit_benchmarks.sh
 #   BENCHMARKS=benchmark_end_to_end bash benchmarks/submit_benchmarks.sh
+#   BENCH_END_TO_END_PRESET=resolved_training_config BENCHMARKS=benchmark_end_to_end bash benchmarks/submit_benchmarks.sh
 #   BENCHMARKS=sharded_smoke bash benchmarks/submit_benchmarks.sh
 #   BENCHMARKS=benchmark_end_to_end,vla bash benchmarks/submit_benchmarks.sh -- --time=6:00:00
 set -euo pipefail
@@ -31,8 +32,9 @@ export VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
 export TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-$HOME/data/verl-agent/text/train.parquet}"
 export VAL_DATA_PATH="${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}"
 export BENCHMARKS="${BENCHMARKS:-benchmark_end_to_end}"
-export BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-3}"
-export BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-5}"
+export BENCH_END_TO_END_PRESET="${BENCH_END_TO_END_PRESET:-doc_baseline}"
+export BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-2}"
+export BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-3}"
 export BENCH_TRACE_INNER_STEPS="${BENCH_TRACE_INNER_STEPS:-0}"
 export BENCH_ENV_SERVER_GPU="${BENCH_ENV_SERVER_GPU:-4}"
 export BENCH_TRAINER_VISIBLE_GPUS="${BENCH_TRAINER_VISIBLE_GPUS:-0,1,2,3}"
@@ -86,6 +88,7 @@ echo "  VLA_CHECKPOINT=${VLA_CHECKPOINT}"
 echo "  TRAIN_DATA_PATH=${TRAIN_DATA_PATH}"
 echo "  VAL_DATA_PATH=${VAL_DATA_PATH}"
 echo "  BENCHMARKS=${BENCHMARKS}"
+echo "  BENCH_END_TO_END_PRESET=${BENCH_END_TO_END_PRESET}"
 echo "  BENCH_WARMUP_ITERATIONS=${BENCH_WARMUP_ITERATIONS}"
 echo "  BENCH_MEASURED_ITERATIONS=${BENCH_MEASURED_ITERATIONS}"
 echo "  BENCH_ENV_SERVER_GPU=${BENCH_ENV_SERVER_GPU}"
