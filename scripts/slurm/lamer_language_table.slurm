@@ -40,7 +40,6 @@ RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${RUN_ID}.log"
 # random ports to avoid crash on same node
 BASE_PORT=$(( 50000 + (SLURM_JOB_ID % 5000) * 2 ))
 TRAIN_PORT=${BASE_PORT}
-VAL_PORT=$(( BASE_PORT + 1 ))
 
 TRAIN_NUM_ENVS="${TRAIN_NUM_ENVS:-4}"
 VAL_NUM_ENVS="${VAL_NUM_ENVS:-4}"
@@ -49,6 +48,10 @@ BLOCK_MODE="BLOCK_4"
 MAX_INNER_STEPS="${MAX_INNER_STEPS:-5}"
 NUM_ATTEMPTS="${NUM_ATTEMPTS:-2}"
 MAX_TURNS="${MAX_TURNS:-2}"
+
+# Intra-GPU sharding: run multiple env server processes per GPU.
+# PROCS_PER_ENV_GPU=1 gives the previous single-server behavior.
+PROCS_PER_ENV_GPU="${PROCS_PER_ENV_GPU:-1}"
 
 # Multistep task configuration (only used when REWARD_TYPE=multistep)
 TRAIN_TASK_LOCATIONS="${TRAIN_TASK_LOCATIONS:-}"
@@ -127,12 +130,29 @@ mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")"
 # Language-table needs its repo on PYTHONPATH
 export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
 
-# GPU isolation: env servers (JAX/LAVA) on GPU 0, LaMer training on GPUs 1-4.
+# GPU isolation: env servers (JAX/LAVA) vs LaMer training GPUs.
 # Without this, JAX preallocates most of GPU memory before training starts → OOM.
-# ENV_SERVER_GPU=0
-# TRAIN_GPUS="1,2,3,4"
-ENV_SERVER_GPU=4
-TRAIN_GPUS="0,1,2,3"
+# ENV_SERVER_GPUS is a comma-separated list of GPU IDs for env serving.
+ENV_SERVER_GPUS="${ENV_SERVER_GPUS:-4}"
+TRAIN_GPUS="${TRAIN_GPUS:-0,1,2,3}"
+
+# Derive shard layout from env GPU list and procs-per-gpu.
+IFS=',' read -ra ENV_GPU_ARRAY <<< "${ENV_SERVER_GPUS}"
+NUM_ENV_GPUS=${#ENV_GPU_ARRAY[@]}
+NUM_ENV_SHARDS=$((NUM_ENV_GPUS * PROCS_PER_ENV_GPU))
+
+if [ $((TRAIN_NUM_ENVS % NUM_ENV_SHARDS)) -ne 0 ]; then
+    echo "ERROR: TRAIN_NUM_ENVS (${TRAIN_NUM_ENVS}) must be divisible by total env shards (${NUM_ENV_SHARDS} = ${NUM_ENV_GPUS} GPUs x ${PROCS_PER_ENV_GPU} procs/GPU)"
+    exit 1
+fi
+ENVS_PER_SHARD=$((TRAIN_NUM_ENVS / NUM_ENV_SHARDS))
+
+# XLA memory fraction per env server process.  Leave ~10% headroom per GPU
+# and reserve 0.15 on the first env GPU for the validation server.
+TRAIN_MEM_FRACTION=$(python3 -c "print(round(0.85 / ${PROCS_PER_ENV_GPU}, 2))")
+# First env GPU shares space with the validation server.
+TRAIN_MEM_FRACTION_FIRST_GPU=$(python3 -c "print(round(0.70 / ${PROCS_PER_ENV_GPU}, 2))")
+VAL_MEM_FRACTION=0.15
 
 ########################################
 ### Step 0: Download VLA checkpoint ####
@@ -177,34 +197,64 @@ if [ "${REWARD_TYPE}" = "multistep" ]; then
     VAL_TASK_FLAGS+=" --task_n_steps ${VAL_TASK_N_STEPS}"
 fi
 
-# Train server (background)
-TRAIN_WORKERS=$((TRAIN_NUM_ENVS * GROUP_SIZE))
-echo "Starting train server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=${TRAIN_WORKERS} workers, GPU ${ENV_SERVER_GPU})..."
-CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
-JAX_PLATFORMS=cuda \
-XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.7 \
-${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
-    --host 0.0.0.0 --port ${TRAIN_PORT} \
-    --num_envs ${TRAIN_NUM_ENVS} --group_n ${GROUP_SIZE} \
-    --block_mode ${BLOCK_MODE} \
-    --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
-    --max_turns ${MAX_TURNS} --do_reflection \
-    --reward_type ${REWARD_TYPE} \
-    --preprocess_mode ${PREPROCESS_MODE} \
-    --split train \
-    ${TRAIN_TASK_FLAGS} \
-    ${VLA_FLAG} \
-    &
-TRAIN_SERVER_PID=$!
-echo "Train server PID: ${TRAIN_SERVER_PID}"
+# Train env servers (background).
+# With PROCS_PER_ENV_GPU > 1, multiple servers share each GPU.
+TRAIN_WORKERS_PER_SHARD=$((ENVS_PER_SHARD * GROUP_SIZE))
+TRAIN_SERVER_PIDS=()
+TRAIN_ADDRESSES=""
+PORT_OFFSET=0
 
-# Validation server (background, group_n=1 — no grouping for eval)
-echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
-CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
+echo "Launching ${NUM_ENV_SHARDS} train env server(s): ${NUM_ENV_GPUS} GPU(s) x ${PROCS_PER_ENV_GPU} proc(s)/GPU, ${ENVS_PER_SHARD} prompt groups x ${GROUP_SIZE} = ${TRAIN_WORKERS_PER_SHARD} workers per shard"
+
+for gpu_id in "${ENV_GPU_ARRAY[@]}"; do
+    # First env GPU shares memory with the validation server.
+    if [ "${gpu_id}" = "${ENV_GPU_ARRAY[0]}" ]; then
+        mem_frac=${TRAIN_MEM_FRACTION_FIRST_GPU}
+    else
+        mem_frac=${TRAIN_MEM_FRACTION}
+    fi
+
+    for proc_idx in $(seq 0 $((PROCS_PER_ENV_GPU - 1))); do
+        port=$((TRAIN_PORT + PORT_OFFSET))
+        PORT_OFFSET=$((PORT_OFFSET + 1))
+
+        echo "  shard $((PORT_OFFSET - 1)): GPU ${gpu_id}, port ${port}, ${ENVS_PER_SHARD} prompt groups, MEM_FRACTION=${mem_frac}"
+        CUDA_VISIBLE_DEVICES=${gpu_id} \
+        JAX_PLATFORMS=cuda \
+        XLA_PYTHON_CLIENT_PREALLOCATE=false \
+        XLA_PYTHON_CLIENT_MEM_FRACTION=${mem_frac} \
+        ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
+            --host 0.0.0.0 --port ${port} \
+            --num_envs ${ENVS_PER_SHARD} --group_n ${GROUP_SIZE} \
+            --block_mode ${BLOCK_MODE} \
+            --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
+            --max_turns ${MAX_TURNS} --do_reflection \
+            --reward_type ${REWARD_TYPE} \
+            --preprocess_mode ${PREPROCESS_MODE} \
+            --split train \
+            ${TRAIN_TASK_FLAGS} \
+            ${VLA_FLAG} \
+            &
+        TRAIN_SERVER_PIDS+=($!)
+
+        if [ -n "${TRAIN_ADDRESSES}" ]; then
+            TRAIN_ADDRESSES="${TRAIN_ADDRESSES},127.0.0.1:${port}"
+        else
+            TRAIN_ADDRESSES="127.0.0.1:${port}"
+        fi
+    done
+done
+echo "Train server PIDs: ${TRAIN_SERVER_PIDS[*]}"
+
+# Validation server (background, group_n=1 — no grouping for eval).
+# Always runs on the first env GPU.
+VAL_PORT=$((TRAIN_PORT + PORT_OFFSET))
+VAL_GPU=${ENV_GPU_ARRAY[0]}
+echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${VAL_GPU}, MEM_FRACTION=${VAL_MEM_FRACTION})..."
+CUDA_VISIBLE_DEVICES=${VAL_GPU} \
 JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.2 \
+XLA_PYTHON_CLIENT_MEM_FRACTION=${VAL_MEM_FRACTION} \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${VAL_PORT} \
     --num_envs ${VAL_NUM_ENVS} --group_n 1 \
@@ -239,9 +289,13 @@ cleanup() {
     echo "[$(date)] cleanup() called — exit_code=${exit_code}, signal=${RECEIVED_SIGNAL:-none}"
     [ -n "${MEM_MONITOR_PID}" ] && kill ${MEM_MONITOR_PID} 2>/dev/null || true
     echo "Cleaning up env servers..."
-    kill ${TRAIN_SERVER_PID} 2>/dev/null || true
+    for pid in "${TRAIN_SERVER_PIDS[@]}"; do
+        kill ${pid} 2>/dev/null || true
+    done
     kill ${VAL_SERVER_PID} 2>/dev/null || true
-    wait ${TRAIN_SERVER_PID} 2>/dev/null || true
+    for pid in "${TRAIN_SERVER_PIDS[@]}"; do
+        wait ${pid} 2>/dev/null || true
+    done
     wait ${VAL_SERVER_PID} 2>/dev/null || true
     echo "Servers stopped."
     if [ -n "${RECEIVED_SIGNAL}" ]; then
@@ -275,14 +329,16 @@ wait_for_port() {
     return 1
 }
 
-wait_for_port ${TRAIN_PORT} "Training" || exit 1
+for i in $(seq 0 $((NUM_ENV_SHARDS - 1))); do
+    wait_for_port $((TRAIN_PORT + i)) "Training shard ${i}" || exit 1
+done
 wait_for_port ${VAL_PORT} "Validation" || exit 1
 
 ########################################
 ### Step 3: Connection test ############
 ########################################
 echo ""
-echo "=== Running connection test ==="
+echo "=== Running connection test (first train shard + validation) ==="
 ${LANGTABLE_PYTHON} -m language_table.lamer.test_connection \
     --host 127.0.0.1 --port ${TRAIN_PORT} --val_port ${VAL_PORT} --full \
     --timeout 300
@@ -322,8 +378,19 @@ export LEARNING_RATE BATCH_SIZE MICRO_BATCH_SIZE
 export USE_KL_LOSS KL_LOSS_COEF KL_LOSS_TYPE
 export USE_KL_IN_REWARD KL_REWARD_COEF
 export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
-export ENV_ADDRESS="127.0.0.1:${TRAIN_PORT}"
 export VAL_ADDRESS="127.0.0.1:${VAL_PORT}"
+
+# Pass env server addresses to trainer.  When there are multiple shards,
+# use the sharded env config (env.sharded=True + env.remote_addresses).
+if [ "${NUM_ENV_SHARDS}" -gt 1 ]; then
+    export ENV_SHARDED=true
+    export ENV_ADDRESSES="${TRAIN_ADDRESSES}"
+    echo "Sharded env mode: ${NUM_ENV_SHARDS} shards — ${ENV_ADDRESSES}"
+else
+    export ENV_SHARDED=false
+    export ENV_ADDRESS="127.0.0.1:${TRAIN_PORT}"
+    echo "Single env server mode: ${ENV_ADDRESS}"
+fi
 
 set +e
 bash "${LAMER_DIR}/examples/language_table/lamer_language_table_slurm.sh"

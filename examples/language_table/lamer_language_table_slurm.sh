@@ -25,7 +25,9 @@ kl_reward_coef=${KL_REWARD_COEF:-0.001}
 mode="mean_norm"
 reflection_type="history_and_reflection"
 
+env_sharded="${ENV_SHARDED:-false}"
 env_address="${ENV_ADDRESS:-127.0.0.1:50051}"
+env_addresses="${ENV_ADDRESSES:-}"
 val_address="${VAL_ADDRESS:-127.0.0.1:50052}"
 
 # Algorithm-specific overrides
@@ -86,7 +88,21 @@ python3 -m verl.trainer.main_ppo \
     env.env_name=language_table \
     env.seed=0 \
     +env.remote=True \
-    +env.remote_address=$env_address \
+    $(if [ "$env_sharded" = "true" ]; then
+        # Build Hydra list: ["addr1","addr2",...]
+        hydra_list=""
+        IFS=',' read -ra _addrs <<< "$env_addresses"
+        for _a in "${_addrs[@]}"; do
+            if [ -n "$hydra_list" ]; then
+                hydra_list="${hydra_list},\"${_a}\""
+            else
+                hydra_list="\"${_a}\""
+            fi
+        done
+        echo "+env.sharded=True +env.remote_addresses=[${hydra_list}]"
+    else
+        echo "+env.remote_address=$env_address"
+    fi) \
     +env.remote_val_address=$val_address \
     env.rollout.n=$group_size \
     env.num_attempts=$num_attempts \

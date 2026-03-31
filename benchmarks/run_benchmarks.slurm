@@ -66,6 +66,7 @@ BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-2}"
 BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-3}"
 BENCH_TRACE_INNER_STEPS="${BENCH_TRACE_INNER_STEPS:-0}"
 BENCH_TRAIN_SHARD_COUNTS="${BENCH_TRAIN_SHARD_COUNTS:-1,2,4}"
+BENCH_PROCS_PER_GPU="${BENCH_PROCS_PER_GPU:-1}"
 BENCH_ENV_SERVER_GPUS="${BENCH_ENV_SERVER_GPUS:-${BENCH_ENV_SERVER_GPU:-4,5,6,7}}"
 BENCH_SKIP_VAL_SERVER="${BENCH_SKIP_VAL_SERVER:-1}"
 BENCH_TRAINER_VISIBLE_GPUS="${BENCH_TRAINER_VISIBLE_GPUS:-0,1,2,3}"
@@ -160,6 +161,7 @@ echo "VAL_DATA_PATH: ${VAL_DATA_PATH}"
 echo "BENCH_WARMUP_ITERATIONS: ${BENCH_WARMUP_ITERATIONS}"
 echo "BENCH_MEASURED_ITERATIONS: ${BENCH_MEASURED_ITERATIONS}"
 echo "BENCH_TRAIN_SHARD_COUNTS: ${BENCH_TRAIN_SHARD_COUNTS}"
+echo "BENCH_PROCS_PER_GPU: ${BENCH_PROCS_PER_GPU}"
 echo "BENCH_ENV_SERVER_GPUS: ${BENCH_ENV_SERVER_GPUS}"
 echo "BENCH_SKIP_VAL_SERVER: ${BENCH_SKIP_VAL_SERVER}"
 echo "BENCH_TRAINER_VISIBLE_GPUS: ${BENCH_TRAINER_VISIBLE_GPUS}"
@@ -253,17 +255,35 @@ if echo "${BENCHMARKS}" | grep -q "benchmark_end_to_end"; then
             echo "ERROR: invalid shard count '${SHARD_COUNT_RAW}' in BENCH_TRAIN_SHARD_COUNTS=${BENCH_TRAIN_SHARD_COUNTS}"
             exit 1
         fi
-        if [ "${SHARD_COUNT}" -gt "${#ENV_SERVER_GPU_POOL[@]}" ]; then
-            echo "ERROR: shard count ${SHARD_COUNT} requires ${SHARD_COUNT} env GPUs, but BENCH_ENV_SERVER_GPUS only lists ${#ENV_SERVER_GPU_POOL[@]}"
+        MAX_SHARDS=$(( ${#ENV_SERVER_GPU_POOL[@]} * BENCH_PROCS_PER_GPU ))
+        if [ "${SHARD_COUNT}" -gt "${MAX_SHARDS}" ]; then
+            echo "ERROR: shard count ${SHARD_COUNT} exceeds max shards (${#ENV_SERVER_GPU_POOL[@]} GPUs * ${BENCH_PROCS_PER_GPU} procs/GPU = ${MAX_SHARDS})"
             exit 1
         fi
 
-        SHARD_ENV_SERVER_GPUS="$(join_first_n_csv "${SHARD_COUNT}")"
+        # How many physical GPUs and procs/GPU for this shard count.
+        # When SHARD_COUNT <= #GPUs: use SHARD_COUNT GPUs, 1 proc each.
+        # When SHARD_COUNT > #GPUs: use all GPUs, multiple procs each.
+        #   We pick procs_per_gpu so that gpus * procs_per_gpu == SHARD_COUNT.
+        #   SHARD_COUNT must be divisible by the number of GPUs used.
+        if [ "${SHARD_COUNT}" -le "${#ENV_SERVER_GPU_POOL[@]}" ]; then
+            NUM_GPUS_NEEDED="${SHARD_COUNT}"
+            RUN_PROCS_PER_GPU=1
+        else
+            NUM_GPUS_NEEDED="${#ENV_SERVER_GPU_POOL[@]}"
+            if [ $(( SHARD_COUNT % NUM_GPUS_NEEDED )) -ne 0 ]; then
+                echo "ERROR: shard count ${SHARD_COUNT} is not divisible by ${NUM_GPUS_NEEDED} GPUs. Use a shard count that is a multiple of the GPU count for intra-GPU sharding."
+                exit 1
+            fi
+            RUN_PROCS_PER_GPU=$(( SHARD_COUNT / NUM_GPUS_NEEDED ))
+        fi
+
+        SHARD_ENV_SERVER_GPUS="$(join_first_n_csv "${NUM_GPUS_NEEDED}")"
         RUN_OUTPUT_DIR="${END_TO_END_ROOT_DIR}/shards_${SHARD_COUNT}"
         mkdir -p "${RUN_OUTPUT_DIR}"
 
         echo ""
-        echo "--- Shard sweep run: train_shards=${SHARD_COUNT} env_gpus=${SHARD_ENV_SERVER_GPUS} ---"
+        echo "--- Shard sweep run: train_shards=${SHARD_COUNT} env_gpus=${SHARD_ENV_SERVER_GPUS} procs_per_gpu=${RUN_PROCS_PER_GPU} ---"
 
         BENCH_CMD=(
             python "${LAMER_DIR}/benchmarks/benchmark_end_to_end.py"
@@ -280,6 +300,7 @@ if echo "${BENCHMARKS}" | grep -q "benchmark_end_to_end"; then
             --langtable-dir "${LANGTABLE_DIR}"
             --vla-checkpoint "${VLA_CHECKPOINT}"
             --env-server-gpu "${SHARD_ENV_SERVER_GPUS}"
+            --procs-per-gpu "${RUN_PROCS_PER_GPU}"
             --trainer-visible-gpus "${TRAIN_GPUS}"
             --ray-num-cpus "${BENCH_RAY_NUM_CPUS}"
         )

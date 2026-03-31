@@ -428,7 +428,13 @@ def main() -> int:
     parser.add_argument(
         "--env-server-gpu",
         default="0",
-        help="Comma-separated GPU ids for train env servers. Each shard gets one GPU.",
+        help="Comma-separated GPU ids for train env servers.",
+    )
+    parser.add_argument(
+        "--procs-per-gpu",
+        type=int,
+        default=1,
+        help="Number of env server processes per GPU (intra-GPU sharding).",
     )
     parser.add_argument("--train-server-mem-fraction", default="0.7")
     parser.add_argument("--val-server-mem-fraction", default="0.2")
@@ -465,40 +471,51 @@ def main() -> int:
     spawned = []
     train_envs_per_shard = None
     if args.mode == "spawn":
+        # Expand GPU list by procs_per_gpu: ["4","5"] with procs=2 → 4 shards.
+        total_shard_count = len(env_server_gpus) * args.procs_per_gpu
         try:
             train_envs_per_shard = _validate_train_shard_layout(
                 train_num_envs=args.train_num_envs,
                 group_size=args.group_size,
-                shard_count=len(env_server_gpus),
+                shard_count=total_shard_count,
             )
         except ValueError as exc:
             parser.error(str(exc))
+
+        # Compute per-process mem fraction.  When multiple processes share a
+        # GPU, split the user-specified fraction among them.
+        base_mem = float(args.train_server_mem_fraction)
+        per_proc_mem = str(round(base_mem / args.procs_per_gpu, 2))
+
         train_addresses = []
         used_ports = set()
-        for idx, gpu_id in enumerate(env_server_gpus):
-            train_port = args.train_port + idx
-            used_ports.add(train_port)
-            train_cmd = _build_server_cmd(
-                args,
-                port=train_port,
-                num_envs=train_envs_per_shard,
-                group_n=args.group_size,
-                split="train",
-            )
-            spawned.append(
-                _spawn_server(
+        shard_idx = 0
+        for gpu_id in env_server_gpus:
+            for _proc in range(args.procs_per_gpu):
+                train_port = args.train_port + shard_idx
+                used_ports.add(train_port)
+                train_cmd = _build_server_cmd(
                     args,
-                    train_cmd,
-                    output_dir / f"train_env_server_{idx}.log",
-                    extra_env={
-                        "CUDA_VISIBLE_DEVICES": gpu_id,
-                        "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
-                        "XLA_PYTHON_CLIENT_MEM_FRACTION": args.train_server_mem_fraction,
-                    },
+                    port=train_port,
+                    num_envs=train_envs_per_shard,
+                    group_n=args.group_size,
+                    split="train",
                 )
-            )
-            _wait_for_port(args.host, train_port, args.startup_timeout)
-            train_addresses.append(f"{args.host}:{train_port}")
+                spawned.append(
+                    _spawn_server(
+                        args,
+                        train_cmd,
+                        output_dir / f"train_env_server_{shard_idx}.log",
+                        extra_env={
+                            "CUDA_VISIBLE_DEVICES": gpu_id,
+                            "XLA_PYTHON_CLIENT_PREALLOCATE": "false",
+                            "XLA_PYTHON_CLIENT_MEM_FRACTION": per_proc_mem,
+                        },
+                    )
+                )
+                _wait_for_port(args.host, train_port, args.startup_timeout)
+                train_addresses.append(f"{args.host}:{train_port}")
+                shard_idx += 1
 
         if args.skip_val_server:
             val_addresses = []
@@ -539,6 +556,7 @@ def main() -> int:
         "val_num_envs": int(args.val_num_envs),
         "group_size": int(args.group_size),
         "train_shard_count": int(len(train_addresses)),
+        "procs_per_gpu": int(args.procs_per_gpu),
         "train_envs_per_shard": (
             int(train_envs_per_shard)
             if train_envs_per_shard is not None
@@ -548,7 +566,7 @@ def main() -> int:
                 else None
             )
         ),
-        "env_server_gpus": env_server_gpus[: len(train_addresses)],
+        "env_server_gpus": env_server_gpus,
         "skip_val_server": bool(args.skip_val_server),
         "val_server_enabled": bool(val_addresses),
         "train_addresses": list(train_addresses),
