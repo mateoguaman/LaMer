@@ -177,6 +177,8 @@ def _build_server_cmd(
         split,
         "--benchmark_timing",
     ]
+    if getattr(args, 'no_shm_rgb', False):
+        cmd.append("--no_shm_rgb")
     if args.benchmark_trace_inner_steps:
         cmd.append("--benchmark_trace_inner_steps")
     if args.do_reflection:
@@ -439,6 +441,11 @@ def main() -> int:
     parser.add_argument("--train-server-mem-fraction", default="0.7")
     parser.add_argument("--val-server-mem-fraction", default="0.2")
     parser.add_argument("--ray-num-cpus", default=None)
+    parser.add_argument(
+        "--no-shm-rgb",
+        action="store_true",
+        help="Disable shared memory RGB optimization in env servers.",
+    )
     args = parser.parse_args()
 
     if not args.train_data or not args.val_data:
@@ -571,6 +578,7 @@ def main() -> int:
         "val_server_enabled": bool(val_addresses),
         "train_addresses": list(train_addresses),
         "val_addresses": list(val_addresses),
+        "shm_rgb": not getattr(args, 'no_shm_rgb', False),
     }
     with (output_dir / "launcher_metadata.json").open("w", encoding="utf-8") as fh:
         json.dump(launcher_metadata, fh, indent=2)

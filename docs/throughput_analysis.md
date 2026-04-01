@@ -4,6 +4,8 @@
 **Benchmark data**: `benchmarks/results/20260325-150117/`
 **Hardware**: NVIDIA H200 (140 GB each), 8 GPUs per node
 
+**Latest measured status update**: See [`throughput_benchmark_report_20260330.md`](throughput_benchmark_report_20260330.md) for the 2026-03-30 end-to-end shard-sweep results, including `jax_gpu` vs `jax_fused`, rollout/LLM/env-server breakdown tables, and the current post-fusion bottleneck analysis.
+
 ---
 
 ## Table of Contents
