@@ -70,13 +70,16 @@ def collect_run_entry(run_dir: Path) -> dict[str, Any]:
     launcher = _load_json(run_dir / "launcher_metadata.json")
     summary = _load_json(run_dir / "artifacts" / "benchmark_summary.json")
 
+    env_gpus = launcher.get("env_server_gpus", [])
     entry = {
         "run_dir": str(run_dir),
         "launcher_metadata_path": str(run_dir / "launcher_metadata.json"),
         "summary_path": str(run_dir / "artifacts" / "benchmark_summary.json"),
         "train_shard_count": int(launcher["train_shard_count"]),
+        "num_gpus": len(env_gpus),
+        "procs_per_gpu": int(launcher.get("procs_per_gpu", 1)),
         "train_envs_per_shard": launcher.get("train_envs_per_shard"),
-        "env_server_gpus": launcher.get("env_server_gpus", []),
+        "env_server_gpus": env_gpus,
         "skip_val_server": bool(launcher.get("skip_val_server", False)),
         "val_server_enabled": bool(launcher.get("val_server_enabled", False)),
         "preprocess_mode": launcher.get("preprocess_mode"),
@@ -88,11 +91,12 @@ def collect_run_entry(run_dir: Path) -> dict[str, Any]:
 
 
 def build_sweep_manifest(root_dir: Path) -> dict[str, Any]:
-    run_dirs = sorted(
-        [path for path in root_dir.iterdir() if path.is_dir()],
-        key=lambda path: collect_run_entry(path)["train_shard_count"],
-    )
-    runs = [collect_run_entry(run_dir) for run_dir in run_dirs]
+    runs = [
+        collect_run_entry(path)
+        for path in root_dir.iterdir()
+        if path.is_dir()
+    ]
+    runs.sort(key=lambda r: (r["train_shard_count"], r["num_gpus"]))
 
     best_run = None
     best_rollout = None
@@ -113,6 +117,8 @@ def build_sweep_manifest(root_dir: Path) -> dict[str, Any]:
     if best_run is not None:
         manifest["best_rollout_run"] = {
             "train_shard_count": best_run["train_shard_count"],
+            "num_gpus": best_run["num_gpus"],
+            "procs_per_gpu": best_run["procs_per_gpu"],
             "rollout_elapsed_s_mean": best_rollout,
             "summary_path": best_run["summary_path"],
         }
