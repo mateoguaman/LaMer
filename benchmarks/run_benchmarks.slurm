@@ -65,8 +65,9 @@ VAL_DATA_PATH="${VAL_DATA_PATH:-$HOME/data/verl-agent/text/test.parquet}"
 BENCH_WARMUP_ITERATIONS="${BENCH_WARMUP_ITERATIONS:-2}"
 BENCH_MEASURED_ITERATIONS="${BENCH_MEASURED_ITERATIONS:-3}"
 BENCH_TRACE_INNER_STEPS="${BENCH_TRACE_INNER_STEPS:-0}"
-# Each entry is "shards:gpus" — e.g. 1:1 = 1 shard on 1 GPU, 4:1 = 4 shards on 1 GPU
-BENCH_SWEEP_CONFIGS="${BENCH_SWEEP_CONFIGS:-1:1,4:4,4:1}"
+# Each entry is "shards:gpus[:preprocess_mode]" — e.g. 1:1:original, 4:1:jax_fused
+# preprocess_mode defaults to PREPROCESS_MODE when omitted.
+BENCH_SWEEP_CONFIGS="${BENCH_SWEEP_CONFIGS:-1:1:original,1:1:jax_gpu,1:1:jax_fused,4:1:jax_fused}"
 BENCH_ENV_SERVER_GPUS="${BENCH_ENV_SERVER_GPUS:-${BENCH_ENV_SERVER_GPU:-4,5,6,7}}"
 BENCH_SKIP_VAL_SERVER="${BENCH_SKIP_VAL_SERVER:-1}"
 BENCH_TRAINER_VISIBLE_GPUS="${BENCH_TRAINER_VISIBLE_GPUS:-0,1,2,3}"
@@ -250,8 +251,9 @@ if echo "${BENCHMARKS}" | grep -q "benchmark_end_to_end"; then
 
     for CONFIG_RAW in "${SWEEP_CONFIGS[@]}"; do
         CONFIG="${CONFIG_RAW//[[:space:]]/}"
-        SHARD_COUNT="${CONFIG%%:*}"
-        NUM_GPUS="${CONFIG##*:}"
+        # Parse "shards:gpus[:preprocess_mode]"
+        IFS=':' read -r SHARD_COUNT NUM_GPUS RUN_PREPROCESS <<< "${CONFIG}"
+        RUN_PREPROCESS="${RUN_PREPROCESS:-${PREPROCESS_MODE}}"
         if ! [[ "${SHARD_COUNT}" =~ ^[0-9]+$ ]] || [ "${SHARD_COUNT}" -lt 1 ]; then
             echo "ERROR: invalid shard count in config '${CONFIG_RAW}' (BENCH_SWEEP_CONFIGS=${BENCH_SWEEP_CONFIGS})"
             exit 1
@@ -271,11 +273,11 @@ if echo "${BENCHMARKS}" | grep -q "benchmark_end_to_end"; then
         RUN_PROCS_PER_GPU=$(( SHARD_COUNT / NUM_GPUS ))
 
         SHARD_ENV_SERVER_GPUS="$(join_first_n_csv "${NUM_GPUS}")"
-        RUN_OUTPUT_DIR="${END_TO_END_ROOT_DIR}/s${SHARD_COUNT}_g${NUM_GPUS}"
+        RUN_OUTPUT_DIR="${END_TO_END_ROOT_DIR}/s${SHARD_COUNT}_g${NUM_GPUS}_${RUN_PREPROCESS}"
         mkdir -p "${RUN_OUTPUT_DIR}"
 
         echo ""
-        echo "--- Sweep run: shards=${SHARD_COUNT} gpus=${NUM_GPUS} procs_per_gpu=${RUN_PROCS_PER_GPU} env_gpus=${SHARD_ENV_SERVER_GPUS} ---"
+        echo "--- Sweep run: shards=${SHARD_COUNT} gpus=${NUM_GPUS} procs_per_gpu=${RUN_PROCS_PER_GPU} preprocess=${RUN_PREPROCESS} env_gpus=${SHARD_ENV_SERVER_GPUS} ---"
 
         BENCH_CMD=(
             python "${LAMER_DIR}/benchmarks/benchmark_end_to_end.py"
@@ -285,7 +287,7 @@ if echo "${BENCHMARKS}" | grep -q "benchmark_end_to_end"; then
             --val-data "${VAL_DATA_PATH}"
             --output-dir "${RUN_OUTPUT_DIR}"
             --model-path "${MODEL_PATH}"
-            --preprocess-mode "${PREPROCESS_MODE}"
+            --preprocess-mode "${RUN_PREPROCESS}"
             --warmup-iterations "${BENCH_WARMUP_ITERATIONS}"
             --measured-iterations "${BENCH_MEASURED_ITERATIONS}"
             --langtable-python "${LANGTABLE_PYTHON}"
