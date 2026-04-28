@@ -118,7 +118,6 @@ scripts/bootstrap_language_table.sh
 
 If your cluster has a tight home quota, set `CONDA_CACHE_DIR`, `PIP_CACHE_DIR`, and `TMPDIR` to scratch or scrubbed storage.
 The bootstrap script exports those paths before installing anything.
-script exports those paths before installing anything.
 
 The Slurm job uses the original LaMer text parquet locations:
 
