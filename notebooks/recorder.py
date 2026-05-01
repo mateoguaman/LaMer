@@ -194,6 +194,37 @@ def _pad_to(frame: np.ndarray, height: int, width: int) -> np.ndarray:
     )
 
 
+def _normalize_frames_for_stack(frames: List[np.ndarray]) -> np.ndarray:
+    """Convert frame list into one stackable uint8 array.
+
+    Handles occasional frame-shape drift by padding all frames to the max H/W.
+    """
+    if not frames:
+        raise ValueError("Cannot save empty frame list")
+
+    cleaned: List[np.ndarray] = []
+    max_h = 0
+    max_w = 0
+    for f in frames:
+        arr = np.asarray(f)
+        # Accept grayscale or RGBA defensively.
+        if arr.ndim == 2:
+            arr = np.repeat(arr[..., None], 3, axis=2)
+        elif arr.ndim == 3 and arr.shape[2] == 4:
+            arr = arr[:, :, :3]
+        if arr.ndim != 3 or arr.shape[2] != 3:
+            raise ValueError(f"Unsupported frame shape: {arr.shape}")
+        if arr.dtype != np.uint8:
+            arr = np.clip(arr, 0, 255).astype(np.uint8)
+        cleaned.append(arr)
+        h, w = arr.shape[:2]
+        max_h = max(max_h, h)
+        max_w = max(max_w, w)
+
+    padded = [_pad_to(f, max_h, max_w) for f in cleaned]
+    return np.stack(padded, axis=0)
+
+
 def _safe_task_name(task: str) -> str:
     return "".join(c if c.isalnum() or c in "-_" else "_" for c in task)
 
@@ -435,6 +466,7 @@ class Recorder:
         """
         # Suppress run_fn's prints (including the env's misleading preset
         # `Task:` line) -- we print our own clean status below.
+        
         with contextlib.redirect_stdout(io.StringIO()):
             frames, reward, info = self.run_fn(command, **kwargs)
 
@@ -499,7 +531,7 @@ class Recorder:
             "notes": self._notes,
         }
         (self.attempt_dir / "meta.json").write_text(json.dumps(meta, indent=2))
-        np.save(self.attempt_dir / "frames.npy", np.stack(self.frames))
+        np.save(self.attempt_dir / "frames.npy", _normalize_frames_for_stack(self.frames))
 
     def summary(self):
         """Aggregate labeled attempts for this task."""
