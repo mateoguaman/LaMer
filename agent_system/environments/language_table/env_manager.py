@@ -15,6 +15,11 @@ from agent_system.environments.remote import RemoteEnvironmentManager
 from .prompt import get_language_table_prompt
 from .projection import language_table_projection
 
+try:
+    from agent_system.prompt_optimizer.state import PromptState
+except Exception:  # pragma: no cover - optimizer is optional
+    PromptState = None  # type: ignore
+
 
 class LanguageTableEnvironmentManager:
     """Wraps a RemoteEnvironmentManager with prompt construction and projection.
@@ -26,9 +31,10 @@ class LanguageTableEnvironmentManager:
     - Tracking per-attempt state for meta-RL
     """
 
-    def __init__(self, remote_env: RemoteEnvironmentManager, config):
+    def __init__(self, remote_env: RemoteEnvironmentManager, config, prompt_state=None):
         self._remote = remote_env
         self.config = config
+        self._prompt_state = prompt_state
 
         self.num_processes = remote_env.num_processes
         self.num_attempts = remote_env.num_attempts
@@ -223,6 +229,11 @@ class LanguageTableEnvironmentManager:
                 parts = [past_goals[t] for t in sorted(past_goals) if past_goals[t]]
                 past_traj[traj_idx] = "; ".join(parts) if parts else ""
 
+            play_template = (
+                self._prompt_state.current_template
+                if self._prompt_state is not None
+                else None
+            )
             prompt = get_language_table_prompt(
                 phase="play",
                 turn_idx=self.curr_turn_idx,
@@ -233,6 +244,7 @@ class LanguageTableEnvironmentManager:
                 past_traj=past_traj,
                 reflection=self.reflections[i],
                 reflection_type=self.reflection_type,
+                play_template=play_template,
             )
             prompts.append(prompt)
         return prompts
@@ -266,16 +278,19 @@ class LanguageTableEnvironmentManager:
         )
 
 
-def make_envs(config):
+def make_envs(config, prompt_state=None):
     """Return (train_env_manager, val_env_manager) for Language Table.
 
     Expects config.env to have:
         - remote_address: "host:port" for training server
         - remote_val_address: "host:port" for validation server
+
+    `prompt_state`, if provided, is shared across both envs so OPRO rewrites
+    propagate to validation rollouts as well.
     """
     train_remote = RemoteEnvironmentManager(config.env.remote_address)
     val_remote = RemoteEnvironmentManager(config.env.remote_val_address)
 
-    envs = LanguageTableEnvironmentManager(train_remote, config)
-    val_envs = LanguageTableEnvironmentManager(val_remote, config)
+    envs = LanguageTableEnvironmentManager(train_remote, config, prompt_state=prompt_state)
+    val_envs = LanguageTableEnvironmentManager(val_remote, config, prompt_state=prompt_state)
     return envs, val_envs

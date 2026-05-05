@@ -1,166 +1,186 @@
-LANGUAGE_TABLE_EXAMPLES = [
-    "slide the green circle into the top side of the yellow hexagon",
-    "slide the green star along with the yellow hexagon towards the center",
-    "move your arm near the bottom center",
-    "push the yellow heart closer to the yellow hexagon and blue triangle",
-    "move the blue triangle into group of blocks",
-    "push the red star upwards",
-    "place the yellow heart to the left side of the green star",
-    "place the green staryellow hexagon at the center of the board",
-    "nudge red star along with red circle a bit up",
-    "move the group of blocks to the centre of the board",
-    "move the arm left beside the red star",
-    "slide the blue triangle along with yellow hexagon slightly up",
-    "move the blue cube towards the center",
-    "push the red star along with the red circle towards the top center",
-    "push red star below the yellow heart",
-    "separate yellow hexagonn from the blue cube",
-    "move the red circle right and down a bit",
-    "slide the blue cube towards left",
-    "move the blue triangle along with the red circle slightly right",
-    "push the blue triangle to the bottom right of the blue cube"
-]
+LANGUAGE_TABLE_PLAY_PROMPT = """
+You are an expert agent operating in a Language-Table environment.
 
-# NOTE: "conclude" is important, so the agent puts the action at the end of the response!
-LANGUAGE_TABLE_PLAY_PROMPT = """You control a robot end-effector that pushes colored blocks on a table by instructing it with short natural language commands.
-Coordinates: (x, y), x=right, y=up.
+# Goal
+You steer a language-conditioned robot policy that pushes colored blocks on a table by issuing short natural language commands. You have multiple trials - the policy may misinterpret commands, so learn from prior trials which commands it actually responds to.
 
-The environment may be adversarial - commands may not produce intended effects.
-The environment is deterministic - learn from prior attempts to discover which actions the environment responds to.
-Here are some examples commands: "slide the blue cube towards left", "move the blue triangle along with the red circle slightly right", "push the blue triangle to the bottom right of the blue cube"
+# Rules
+- Coordinates: (x, y), x=right, y=up.
+- Issue ONE short natural language command per turn.
+- Treat the table as a 3x3 grid with the following locations:
+    top left | top middle | top right
+    middle left | middle | middle right
+    bottom left | bottom middle | bottom right
+- Hints:
+    - Blocks jammed in a corner or along an edge are hard to push somewhere else.
+    - When blocks sit very close together, separating them is hard.
+    - Pushing a block through or past other blocks to reach its target pose is hard. Choose the order of pushing blocks to avoid collisions.
+    - When pushing blocks prefer shortest paths to the target location.
 
+# Observations
+The initial state of the environment is:
 {init_observation}{past_trajectories_reflections}{current_trajectory}
+Now it's your turn to issue a command.
 
-Reason step-by-step, then conclude with a single command in <action> </action> tags.
+- Your response should first be step-by-step reasoning about the current situation.
+- Then conclude with a single short natural language command within <action> </action> tags.
 """
 
-LANGUAGE_TABLE_REFLECT_PROMPT = """You control a robot end-effector that pushes colored blocks on a table by instructing it with short natural language commands.
-Coordinates: (x, y), x=right, y=up.
+# Example: an L-shaped formation can be created by pushing blocks to the top left, middle left, bottom left, and bottom middle.
 
-The environment may be adversarial - commands may not produce intended effects. The environment is deterministic - learn from prior attempts to discover which actions the environment responds to. To get you started, try rewording, decomposing, or restructuring the commands to make it more effective.
 
-{init_observation}
-{current_trajectory}
-The task FAILED.
+LANGUAGE_TABLE_REFLECT_PROMPT = """
+You are an expert agent operating in a Language-Table environment.
 
-Reason step-by-step, to analyze the outcomes of your previous commands and whether a disturbance is present. Conclude with your reflection inside <remark> </remark> tags to guide the next trial.
+# Goal
+You steer a language-conditioned robot policy that pushes colored blocks on a table by issuing short natural language commands.
+
+# Rules
+- Coordinates: (x, y), x=right, y=up.
+- The policy may misinterpret commands.
+- Treat the table as a 3x3 grid with the following locations:
+    top left | top middle | top right
+    middle left | middle | middle right
+    bottom left | bottom middle | bottom right
+- Hints:
+    - Blocks jammed in a corner or along an edge are hard to push somewhere else.
+    - When blocks sit very close together, separating them is hard.
+    - Pushing a block through or past other blocks to reach its target pose is hard.
+
+# Your Task
+You will be given the history of a past trial. Reflect on it, identify mistakes or ineffective commands, and devise a concise, improved plan starting from the original initial state.
+
+# Past Experience
+The initial state of the environment is:
+{init_observation}{current_trajectory}
+The task is NOT successfully completed.
+
+Now it's your turn to reflect and come up with a new plan.
+
+- Your response should first be step-by-step reasoning about which commands the policy did/didn't respond to and where things went wrong.
+- Then devise a concise new plan with specific commands to try next.
+- Finally, end with your reflection and improved plan inside <remark> </remark> tags to guide the next trial.
 """
 
-# Prompt templates for parsing past trajectories and reflections
-PAST_TRAJECTORY_AND_REFLECTION_TEMPLATE = """
-On attempt #{traj_idx}, you issued the movement commands: {past_trajectory}
-The task was NOT successfully completed. Your reflection was:
-{reflection}"""
 
-HISTORY_ONLY_TEMPLATE = """
-On attempt #{traj_idx}, you issued the movement commands: {past_trajectory}
-The task was NOT successfully completed."""
+PAST_TRAJECTORY_AND_REFLECTION_TEMPLATE = '''
 
-REFLECTION_ONLY_TEMPLATE = """
-On attempt #{traj_idx}, the task was NOT successfully completed. Your reflection was:
-{reflection}"""
+On trial #{traj_idx}, you took the following actions:
+{past_trajectory}
+The task is NOT successfully completed. Your reflection is:
+{reflection}'''
+
+HISTORY_ONLY_TEMPLATE = '''
+
+On trial #{traj_idx}, you took the following actions:
+{past_trajectory}
+The task is NOT successfully completed.'''
+
+REFLECTION_ONLY_TEMPLATE = '''
+
+On trial #{traj_idx}, the task is NOT successfully completed. Your reflection is:
+{reflection}'''
 
 
 def parse_reflection(traj_idx, past_traj, reflection, reflection_type):
     if traj_idx == 0 or len(reflection) == 0:
         return "\n"
-    else:
-        memories = []
-        for _idx in range(traj_idx):
-            if reflection_type == "history_and_reflection":
-                memory = PAST_TRAJECTORY_AND_REFLECTION_TEMPLATE.format(
-                    traj_idx=_idx + 1,
-                    past_trajectory=past_traj[_idx],
-                    reflection=reflection[_idx],
-                )
-            elif reflection_type == "history_only":
-                memory = HISTORY_ONLY_TEMPLATE.format(
-                    traj_idx=_idx + 1,
-                    past_trajectory=past_traj[_idx],
-                )
-            elif reflection_type == "reflection_only":
-                memory = REFLECTION_ONLY_TEMPLATE.format(
-                    traj_idx=_idx + 1,
-                    reflection=reflection[_idx],
-                )
-            else:
-                raise ValueError(f"Unknown reflection_type: {reflection_type}")
-            memories.append(memory)
-        return "".join(memories)
+    memories = []
+    for _idx in range(traj_idx):
+        if reflection_type == "history_and_reflection":
+            memory = PAST_TRAJECTORY_AND_REFLECTION_TEMPLATE.format(
+                traj_idx=_idx + 1,
+                past_trajectory=past_traj[_idx],
+                reflection=reflection[_idx],
+            )
+        elif reflection_type == "history_only":
+            memory = HISTORY_ONLY_TEMPLATE.format(
+                traj_idx=_idx + 1,
+                past_trajectory=past_traj[_idx],
+            )
+        elif reflection_type == "reflection_only":
+            memory = REFLECTION_ONLY_TEMPLATE.format(
+                traj_idx=_idx + 1,
+                reflection=reflection[_idx],
+            )
+        else:
+            raise ValueError(f"Unknown reflection_type: {reflection_type}")
+        memories.append(memory)
+    return "".join(memories)
 
 
-TRAJ_1_INIT = """
-You're on step {turn_idx}/{max_turns}."""
+CURR_TRAJ_AT_TRAJ1 = '''
+You have already taken the following actions:
+{current_trajectory}
+'''
 
-CURR_TRAJ_AT_TRAJ1 = """
-You're on step {turn_idx}/{max_turns}. You previously issued the movement commands: {current_trajectory}
-"""
+CURR_TRAJ_AT_TRAJ2toN = '''
 
-CURR_TRAJ_AT_TRAJ2toN = """
-Currently you're on attempt #{traj_idx}. You're on step {turn_idx}/{max_turns}. You previously issued the movement commands: {current_trajectory}
-"""
+Currently you're on trial #{traj_idx}. You have already taken the following actions:
+{current_trajectory}
+'''
 
-TRAJ_2toN_INIT = """
-Currently you're on attempt #{traj_idx}, starting fresh. You're on step {turn_idx}/{max_turns}."""
+TRAJ_2toN_INIT = '''
+
+Currently you're on trial #{traj_idx}, starting from the initial state.'''
 
 
-def parse_current_trajectory(turn_idx, traj_idx, curr_traj, max_turns):
+def parse_current_trajectory(turn_idx, traj_idx, curr_traj):
     if traj_idx == 0:
         if turn_idx == 0:
-            return TRAJ_1_INIT.format(turn_idx=turn_idx + 1, max_turns=max_turns)
-        else:
-            return CURR_TRAJ_AT_TRAJ1.format(
-                turn_idx=turn_idx + 1, max_turns=max_turns,
-                current_trajectory=curr_traj,
-            )
-    else:
-        if turn_idx == 0:
-            return TRAJ_2toN_INIT.format(
-                traj_idx=traj_idx + 1, turn_idx=turn_idx + 1, max_turns=max_turns,
-            )
-        else:
-            return CURR_TRAJ_AT_TRAJ2toN.format(
-                traj_idx=traj_idx + 1, turn_idx=turn_idx + 1, max_turns=max_turns,
-                current_trajectory=curr_traj,
-            )
-
-
-def debug_append_prompt(prompt: str, phase: str, turn_idx: int, traj_idx: int) -> None:
-    with open("/gpfs/home/memmelma/projects/LaMer/tmp.txt", "a", encoding="utf-8") as f:
-        f.write(f"\n--- phase={phase} turn={turn_idx} traj={traj_idx} ---\n")
-        f.write(prompt)
-        f.write("\n"*5)
+            return ""
+        return CURR_TRAJ_AT_TRAJ1.format(current_trajectory=curr_traj)
+    if turn_idx == 0:
+        return TRAJ_2toN_INIT.format(traj_idx=traj_idx + 1)
+    return CURR_TRAJ_AT_TRAJ2toN.format(
+        traj_idx=traj_idx + 1,
+        current_trajectory=curr_traj,
+    )
 
 
 def get_language_table_prompt(
     phase: str = "play",
     turn_idx: int = 0,
     traj_idx: int = 0,
-    max_turns: int = 1,
     init_observation: str = "",
     curr_traj: str = "",
     past_traj: dict = {},
     reflection: str = "",
     reflection_type: str = "reflection_only",
+    play_template: str | None = None,
+    **_deprecated_kwargs,
 ):
+    """Build a play or reflect prompt.
+
+    `play_template` lets callers (e.g. the OPRO optimizer) override the default
+    `LANGUAGE_TABLE_PLAY_PROMPT` with a learned/rewritten template. The
+    template must still contain the three placeholders `{init_observation}`,
+    `{past_trajectories_reflections}`, `{current_trajectory}` because they are
+    filled with structured observation context here.
+    """
     assert phase in ["play", "reflect"]
 
     if phase == "play":
+        template = play_template if play_template is not None else LANGUAGE_TABLE_PLAY_PROMPT
+        for ph in _REQUIRED_PLAY_PLACEHOLDERS:
+            if ph not in template:
+                raise ValueError(
+                    f"play_template missing required placeholder {ph!r}; "
+                    f"OPRO rewrites must preserve the placeholder contract."
+                )
         past_trajectories_reflections = parse_reflection(
             traj_idx, past_traj, reflection, reflection_type
         )
-        current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj, max_turns)
-        prompt = LANGUAGE_TABLE_PLAY_PROMPT.format(
+        current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj)
+        prompt = template.format(
             init_observation=init_observation,
             past_trajectories_reflections=past_trajectories_reflections,
             current_trajectory=current_trajectory,
         )
     else:
-        current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj, max_turns)
+        current_trajectory = parse_current_trajectory(turn_idx, traj_idx, curr_traj)
         prompt = LANGUAGE_TABLE_REFLECT_PROMPT.format(
             init_observation=init_observation,
             current_trajectory=current_trajectory,
         )
-    out = prompt.strip()
-    # debug_append_prompt(out, phase, turn_idx, traj_idx)
-    return out
+    return prompt.strip()
