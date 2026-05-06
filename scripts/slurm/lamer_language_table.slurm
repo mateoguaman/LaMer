@@ -27,6 +27,7 @@ VAL_DATA_PATH="$HOME/data/verl-agent/text/test.parquet"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-}"
 RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
 REWARD_TYPE="${REWARD_TYPE:-block2block}"
+VLA_POLICY="${VLA_POLICY:-smolvla}"
 ADV_ESTIMATOR="${ADV_ESTIMATOR:-gigpo}"
 if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "ERROR: CHECKPOINT_ROOT is not set."
@@ -45,7 +46,8 @@ VAL_PORT=$(( BASE_PORT + 1 ))
 TRAIN_NUM_ENVS="${TRAIN_NUM_ENVS:-4}"
 VAL_NUM_ENVS="${VAL_NUM_ENVS:-4}"
 GROUP_SIZE="${GROUP_SIZE:-8}"
-BLOCK_MODE="BLOCK_4"
+TRAIN_BLOCK_MODE="${TRAIN_BLOCK_MODE:-${BLOCK_MODE:-BLOCK_4}}"
+VAL_BLOCK_MODE="${VAL_BLOCK_MODE:-${BLOCK_MODE:-BLOCK_4}}"
 MAX_INNER_STEPS="${MAX_INNER_STEPS:-5}"
 NUM_ATTEMPTS="${NUM_ATTEMPTS:-2}"
 MAX_TURNS="${MAX_TURNS:-2}"
@@ -60,14 +62,21 @@ VAL_TASK_SHAPES="${VAL_TASK_SHAPES:-}"
 VAL_TASK_COLORS="${VAL_TASK_COLORS:-}"
 VAL_TASK_N_STEPS="${VAL_TASK_N_STEPS:-3}"
 
-# VLA (inner-loop policy) — set to "" to use random actions
+# VLA (inner-loop policy). SmolVLA checkpoints may be local paths or HF repo IDs.
 VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
 VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
-if [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
+SMOLVLA_CHECKPOINT="${SMOLVLA_CHECKPOINT:-Sidharth-R/langtable-smolvla-finetuned}"
+if [ -z "${VLA_CHECKPOINT}" ] && [ "${VLA_POLICY}" = "smolvla" ]; then
+    VLA_CHECKPOINT="${SMOLVLA_CHECKPOINT}"
+elif [ -z "${VLA_CHECKPOINT}" ] && [ -n "${VLA_CHECKPOINT_DIR}" ]; then
     VLA_CHECKPOINT="${VLA_CHECKPOINT_DIR}/bc_resnet_sim_checkpoint_955000"
 fi
+if [ "${VLA_POLICY}" = "smolvla" ] && [[ "${VLA_CHECKPOINT}" == *bc_resnet_sim_checkpoint_* ]]; then
+    echo "WARNING: VLA_CHECKPOINT looks like a LAVA checkpoint; using SMOLVLA_CHECKPOINT=${SMOLVLA_CHECKPOINT}"
+    VLA_CHECKPOINT="${SMOLVLA_CHECKPOINT}"
+fi
 
-# Preprocessing mode for _build_batch: "original", "batched_tf", or "jax_gpu"
+# LAVA-only preprocessing mode for _build_batch.
 PREPROCESS_MODE="${PREPROCESS_MODE:-jax_gpu}"
 
 ######################
@@ -92,6 +101,11 @@ echo "LAMER_DIR: ${LAMER_DIR}"
 echo "LANGTABLE_DIR: ${LANGTABLE_DIR}"
 echo "LANGTABLE_CONDA_ENV: ${LANGTABLE_CONDA_ENV}"
 echo "TRAINER_LOCAL_DIR: ${TRAINER_LOCAL_DIR}"
+echo "REWARD_TYPE: ${REWARD_TYPE}"
+echo "VLA_POLICY: ${VLA_POLICY}"
+echo "VLA_CHECKPOINT: ${VLA_CHECKPOINT:-<none>}"
+echo "TRAIN_BLOCK_MODE: ${TRAIN_BLOCK_MODE}"
+echo "VAL_BLOCK_MODE: ${VAL_BLOCK_MODE}"
 echo "CONDA_PKGS_DIRS: ${CONDA_PKGS_DIRS:-<default>}"
 echo "PIP_CACHE_DIR: ${PIP_CACHE_DIR:-<default>}"
 echo "TMPDIR: ${TMPDIR:-<default>}"
@@ -127,17 +141,17 @@ mkdir -p "${TRAINER_LOCAL_DIR}" "$(dirname "${RUN_LOG_PATH}")"
 # Language-table needs its repo on PYTHONPATH
 export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
 
-# GPU isolation: env servers (JAX/LAVA) on GPU 0, LaMer training on GPUs 1-4.
-# Without this, JAX preallocates most of GPU memory before training starts → OOM.
+# GPU isolation: env servers / low-level VLA on GPU 0, LaMer training on GPUs 1-4.
+# For LAVA, this also avoids JAX preallocating training GPU memory.
 # ENV_SERVER_GPU=0
 # TRAIN_GPUS="1,2,3,4"
 ENV_SERVER_GPU=4
 TRAIN_GPUS="0,1,2,3"
 
 ########################################
-### Step 0: Download VLA checkpoint ####
+### Step 0: Download LAVA checkpoint ###
 ########################################
-if [ -n "${VLA_CHECKPOINT}" ] && [ ! -f "${VLA_CHECKPOINT}" ]; then
+if [ "${VLA_POLICY}" = "lava" ] && [ -n "${VLA_CHECKPOINT}" ] && [ ! -f "${VLA_CHECKPOINT}" ]; then
     echo "=== Downloading LAVA checkpoint ==="
     mkdir -p "${VLA_CHECKPOINT_DIR}"
     wget -q --show-progress -O "${VLA_CHECKPOINT}" \
@@ -151,14 +165,31 @@ fi
 echo ""
 echo "=== Starting Language Table env servers ==="
 
-# Build VLA flag (empty string if no checkpoint)
+# Build policy flags. SmolVLA accepts HF repo IDs, so do not require a local file.
 VLA_FLAG=""
-if [ -n "${VLA_CHECKPOINT}" ] && [ -f "${VLA_CHECKPOINT}" ]; then
-    VLA_FLAG="--vla_checkpoint ${VLA_CHECKPOINT}"
-    echo "VLA enabled: ${VLA_CHECKPOINT}"
-else
-    echo "WARNING: No VLA checkpoint found at '${VLA_CHECKPOINT}' — using Gemini policy"
-    VLA_FLAG="--policy gemini"
+case "${VLA_POLICY}" in
+    smolvla|lava)
+        VLA_FLAG="--policy ${VLA_POLICY}"
+        if [ -n "${VLA_CHECKPOINT}" ]; then
+            VLA_FLAG+=" --vla_checkpoint ${VLA_CHECKPOINT}"
+            echo "VLA enabled (${VLA_POLICY}): ${VLA_CHECKPOINT}"
+        else
+            echo "WARNING: No VLA checkpoint set; ${VLA_POLICY} manager will use random inner-loop actions"
+        fi
+        ;;
+    gemini)
+        VLA_FLAG="--policy gemini"
+        echo "Using Gemini policy for environment actions"
+        ;;
+    *)
+        echo "ERROR: unsupported VLA_POLICY='${VLA_POLICY}' (expected smolvla, lava, or gemini)"
+        exit 1
+        ;;
+esac
+
+PREPROCESS_FLAG=""
+if [ "${VLA_POLICY}" = "lava" ]; then
+    PREPROCESS_FLAG="--preprocess_mode ${PREPROCESS_MODE}"
 fi
 
 # Build task-config flags for multistep reward
@@ -179,7 +210,7 @@ fi
 
 # Train server (background)
 TRAIN_WORKERS=$((TRAIN_NUM_ENVS * GROUP_SIZE))
-echo "Starting train server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=${TRAIN_WORKERS} workers, GPU ${ENV_SERVER_GPU})..."
+echo "Starting train server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=${TRAIN_WORKERS} workers, GPU ${ENV_SERVER_GPU}, blocks ${TRAIN_BLOCK_MODE})..."
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
 JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
@@ -187,11 +218,11 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.7 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${TRAIN_PORT} \
     --num_envs ${TRAIN_NUM_ENVS} --group_n ${GROUP_SIZE} \
-    --block_mode ${BLOCK_MODE} \
+    --block_mode ${TRAIN_BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
     --reward_type ${REWARD_TYPE} \
-    --preprocess_mode ${PREPROCESS_MODE} \
+    ${PREPROCESS_FLAG} \
     --split train \
     ${TRAIN_TASK_FLAGS} \
     ${VLA_FLAG} \
@@ -200,7 +231,7 @@ TRAIN_SERVER_PID=$!
 echo "Train server PID: ${TRAIN_SERVER_PID}"
 
 # Validation server (background, group_n=1 — no grouping for eval)
-echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU})..."
+echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU}, blocks ${VAL_BLOCK_MODE})..."
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
 JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
@@ -208,11 +239,11 @@ XLA_PYTHON_CLIENT_MEM_FRACTION=0.2 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${VAL_PORT} \
     --num_envs ${VAL_NUM_ENVS} --group_n 1 \
-    --block_mode ${BLOCK_MODE} \
+    --block_mode ${VAL_BLOCK_MODE} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
     --reward_type ${REWARD_TYPE} \
-    --preprocess_mode ${PREPROCESS_MODE} \
+    ${PREPROCESS_FLAG} \
     --split val \
     ${VAL_TASK_FLAGS} \
     ${VLA_FLAG} \

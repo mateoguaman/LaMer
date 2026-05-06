@@ -14,3 +14,7 @@ lamer-*.err
 logs/
 checkpoints/
 *.csv
+pyrightconfig.json
+*.mp4
+evals/
+.vscode/
