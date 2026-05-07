@@ -19,6 +19,7 @@ You steer a language-conditioned robot policy that pushes colored blocks on a ta
 
 # Observations
 The initial state of the environment is:
+<image>
 {init_observation}{past_trajectories_reflections}{current_trajectory}
 Now it's your turn to issue a command.
 
@@ -52,6 +53,7 @@ You will be given the history of a past trial. Reflect on it, identify mistakes 
 
 # Past Experience
 The initial state of the environment is:
+<image>
 {init_observation}{current_trajectory}
 The task is NOT successfully completed.
 
@@ -124,6 +126,11 @@ TRAJ_2toN_INIT = '''
 
 Currently you're on trial #{traj_idx}, starting from the initial state.'''
 
+_REQUIRED_PLAY_PLACEHOLDERS = (
+    "{init_observation}",
+    "{past_trajectories_reflections}",
+    "{current_trajectory}",
+)
 
 def parse_current_trajectory(turn_idx, traj_idx, curr_traj):
     if traj_idx == 0:
