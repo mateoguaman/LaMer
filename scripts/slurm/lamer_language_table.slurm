@@ -224,7 +224,6 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --reward_type ${REWARD_TYPE} \
     ${PREPROCESS_FLAG} \
     --split train \
-    # --include_rgb \
     ${TRAIN_TASK_FLAGS} \
     ${VLA_FLAG} \
     &
@@ -246,7 +245,6 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --reward_type ${REWARD_TYPE} \
     ${PREPROCESS_FLAG} \
     --split val \
-    # --include_rgb \
     ${VAL_TASK_FLAGS} \
     ${VLA_FLAG} \
     &
