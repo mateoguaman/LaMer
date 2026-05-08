@@ -50,7 +50,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3.5-4B \
+    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
     +actor_rollout_ref.model.enable_thinking=False \
     actor_rollout_ref.actor.optim.lr=$learning_rate \
     actor_rollout_ref.model.use_remove_padding=True \

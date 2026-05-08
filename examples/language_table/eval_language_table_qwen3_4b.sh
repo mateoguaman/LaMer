@@ -18,7 +18,7 @@ set -x
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAMER_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LANGTABLE_DIR="${LANGTABLE_DIR:-${HOME}/projects/language-table}"
-LANGTABLE_PYTHON="${LANGTABLE_PYTHON:-ltvenv/bin/python}"
+LANGTABLE_PYTHON="${LANGTABLE_PYTHON:-/home/sidhraja/miniconda3/envs/ltvenv/bin/python}"
 SMOLVLA_CHECKPOINT="${SMOLVLA_CHECKPOINT:-Sidharth-R/langtable-smolvla-finetuned}"
 RUN_NAME="${RUN_NAME:-eval_language_table_qwen3_4b}"
 TRAIN_DATA_PATH="${TRAIN_DATA_PATH:-${HOME}/data/verl-agent/text/train.parquet}"
