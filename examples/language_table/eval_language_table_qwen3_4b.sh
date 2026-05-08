@@ -117,7 +117,7 @@ done
 echo ""
 echo "=== Running connection test ==="
 ${LANGTABLE_PYTHON} -m language_table.lamer.test_connection \
-    --host 127.0.0.1 --val_port ${VAL_PORT} --full \
+    --host 127.0.0.1 --port ${VAL_PORT} --full \
     --timeout 300
 echo "Connection test passed!"
 
@@ -192,7 +192,7 @@ CUDA_VISIBLE_DEVICES=${TRAIN_GPU} python3 -m verl.trainer.main_ppo \
     trainer.nnodes=1 \
     trainer.total_epochs=1 \
     trainer.val_before_train=True \
-    trainer.val_only=True \
+    +trainer.val_only=True \
     trainer.log_val_generations="${VAL_NUM_ENVS}" \
     trainer.log_val_videos=4 \
     trainer.resume_mode=disable \

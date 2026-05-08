@@ -39,6 +39,11 @@ if [ "$ADV_ESTIMATOR" = "gigpo" ]; then
     )
 fi
 
+if ! python3 -c "import flash_attn" >/dev/null 2>&1; then
+    echo "flash-attn not found; installing..."
+    pip3 install flash-attn==2.7.4.post1 --no-build-isolation --no-cache-dir
+fi
+
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=$ADV_ESTIMATOR \
     data.train_files=${TRAIN_DATA_PATH:?'Set TRAIN_DATA_PATH'} \
