@@ -7,6 +7,7 @@ The TrajectoryCollector and RayPPOTrainer never know the difference.
 """
 
 import logging
+import os
 import socket
 import time
 from collections import defaultdict
@@ -22,18 +23,32 @@ _MAX_RETRIES = 4
 _INITIAL_BACKOFF_S = 2
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %.1fs", name, value, default)
+        return default
+
+
+_DEFAULT_TIMEOUT_S = _env_float("LAMER_REMOTE_TIMEOUT_S", 1200.0)
+
+
 class RemoteEnvironmentManager:
     """Network client implementing the EnvironmentManagerBase interface."""
 
-    def __init__(self, server_address: str, timeout: float = 300.0):
+    def __init__(self, server_address: str, timeout: float = _DEFAULT_TIMEOUT_S):
         """
         Parameters
         ----------
         server_address : str
             ``"host:port"`` of the running EnvServer.
         timeout : float
-            Socket timeout in seconds (default 5 min to accommodate slow
-            environments or large batches).
+            Socket timeout in seconds. Defaults to LAMER_REMOTE_TIMEOUT_S
+            or 20 min to accommodate slow Language Table batches.
         """
         host, port_str = server_address.rsplit(":", 1)
         self._host = host
