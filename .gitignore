@@ -19,3 +19,5 @@ pyrightconfig.json
 evals/
 .vscode/
 CLAUDE.md
+*.err
+*.out
