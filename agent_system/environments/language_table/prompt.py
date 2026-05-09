@@ -7,15 +7,39 @@ You steer a language-conditioned robot policy that pushes colored blocks on a ta
 # Rules
 - Coordinates: (x, y), x=right, y=up.
 - Issue ONE short natural language command per turn.
-- Treat the table as a 3x3 grid with the following locations:
-    top left | top middle | top right
-    middle left | middle | middle right
-    bottom left | bottom middle | bottom right
+
+# All of the valid commands are in the following format:
+- push the <color> <shape> towards the <location>
+
+# the valid colors are:
+- red
+- blue
+- green
+- yellow
+
+# the valid shapes are:
+- cube
+- star
+- moon
+- pentagon
+
+# the valid locations are:
+- top left
+- top center
+- top right
+- center left
+- center
+- center right
+- bottom left
+- bottom center
+- bottom right
+
 - Hints:
     - Blocks jammed in a corner or along an edge are hard to push somewhere else.
     - When blocks sit very close together, separating them is hard.
     - Pushing a block through or past other blocks to reach its target pose is hard. Choose the order of pushing blocks to avoid collisions.
     - When pushing blocks prefer shortest paths to the target location.
+    - If the previous command hasn't completed yet, issue the same command again.
 
 # Observations
 The initial state of the environment is:
@@ -40,9 +64,10 @@ You steer a language-conditioned robot policy that pushes colored blocks on a ta
 - Coordinates: (x, y), x=right, y=up.
 - The policy may misinterpret commands.
 - Treat the table as a 3x3 grid with the following locations:
-    top left | top middle | top right
-    middle left | middle | middle right
-    bottom left | bottom middle | bottom right
+    top left | top center | top right
+    center left | center | center right
+    bottom left | bottom center | bottom right
+
 - Hints:
     - Blocks jammed in a corner or along an edge are hard to push somewhere else.
     - When blocks sit very close together, separating them is hard.
