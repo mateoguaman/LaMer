@@ -202,8 +202,12 @@ class RemoteEnvironmentManager:
 
         for attempt in range(_MAX_RETRIES):
             try:
-                send_message(self._socket, request)
-                response: EnvResponse = recv_message(self._socket)
+                if self._socket is None:
+                    self._connect()
+                sock = self._socket
+                assert sock is not None
+                send_message(sock, request)
+                response: EnvResponse = recv_message(sock)
 
                 if response.status == "error":
                     raise RuntimeError(
