@@ -27,11 +27,11 @@ RUN_NAME="${RUN_NAME:-api_rollout}"
 
 VLLM_URL="${VLLM_URL:-http://127.0.0.1:8000/v1}"
 MODEL="${MODEL:-Qwen/Qwen3-4B}"
-NUM_EPISODES="${NUM_EPISODES:-4}"
-NUM_ENVS="${NUM_ENVS:-4}"
+NUM_EPISODES="${NUM_EPISODES:-1}"
+NUM_ENVS="${NUM_ENVS:-8}"
 MAX_TURNS="${MAX_TURNS:-10}"
 MAX_INNER_STEPS="${MAX_INNER_STEPS:-50}"
-ENV_PORT="${ENV_PORT:-50053}"
+ENV_PORT="${ENV_PORT:-50063}"
 ENV_SERVER_GPU="${ENV_SERVER_GPU:-1}"
 
 VAL_DATA_PATH="${VAL_DATA_PATH:-${HOME}/data/verl-agent/text/test.parquet}"
@@ -93,6 +93,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --split val \
     --policy smolvla \
     --vla_checkpoint "${SMOLVLA_CHECKPOINT}" \
+    --chunk_size 10 \
     > >(tee -a "${LOG_FILE}") 2>&1 \
     &
 ENV_SERVER_PID=$!

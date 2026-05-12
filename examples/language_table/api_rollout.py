@@ -91,7 +91,11 @@ def load_num_episodes(val_data, cap):
 
 def extract_action(text):
     m = re.findall(r"<action>(.*?)</action>", text, re.DOTALL)
-    return m[-1].strip() if m else text.strip().splitlines()[-1][:100]
+    if m:
+        return m[-1].strip()
+    lines = text.strip().splitlines()
+    return lines[-1][:100] if lines else ""
+
 
 
 def overlay_text(frames, label):
@@ -198,7 +202,7 @@ def run_batch(env, client, model, max_turns, temperature, max_tokens,
             cmd = _human_call(batch_idx, step_idx, num_envs)
             for i in range(num_envs):
                 if active[i]:
-                    text_actions[i] = cmd
+                    text_actions[i] = f"<action>{cmd}</action>"
         else:
             # Issue all LLM calls in parallel
             with ThreadPoolExecutor(max_workers=num_envs) as pool:
@@ -212,6 +216,7 @@ def run_batch(env, client, model, max_turns, temperature, max_tokens,
                     i = futures[fut]
                     text_actions[i] = fut.result()
 
+        goals = [extract_action(text_actions[i]) for i in range(num_envs)]
         for i in range(num_envs):
             if active[i]:
                 goal = extract_action(text_actions[i])
