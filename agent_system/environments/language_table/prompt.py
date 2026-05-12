@@ -9,7 +9,7 @@ You steer a language-conditioned robot policy that pushes colored blocks on a ta
 - Issue ONE short natural language command per turn.
 
 # All of the valid commands are in the following format:
-- push the <color> <shape> towards the <location>
+- push the <color> <shape> to the <location>
 
 # the valid colors are:
 - red
@@ -24,15 +24,18 @@ You steer a language-conditioned robot policy that pushes colored blocks on a ta
 - pentagon
 
 # the valid locations are:
-- top left
+- top left corner
 - top center
-- top right
+- top right corner
 - center left
 - center
 - center right
-- bottom left
+- bottom left corner
 - bottom center
-- bottom right
+- bottom right corner
+
+An example of a valid command is:
+- push the blue cube to the bottom center
 
 - Hints:
     - Blocks jammed in a corner or along an edge are hard to push somewhere else.
