@@ -21,3 +21,5 @@ evals/
 CLAUDE.md
 *.err
 *.out
+results/
+.env.language_table_local

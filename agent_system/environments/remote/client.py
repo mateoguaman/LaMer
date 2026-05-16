@@ -105,6 +105,14 @@ class RemoteEnvironmentManager:
         """Returns ``(observations_dict, infos_list)``."""
         return self._call("reflect")
 
+    def get_object_positions(self):
+        """Return remote diagnostic positions, if the server supports them."""
+        return self._call("get_object_positions")
+
+    def render(self):
+        """Return RGB render frames from the remote env, if supported."""
+        return self._call("render")
+
     def success_evaluator(self, **kwargs):
         """Evaluate episode success locally (no TCP round-trip needed).
 

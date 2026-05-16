@@ -23,12 +23,14 @@ LAMER_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 LANGTABLE_DIR="${LANGTABLE_DIR:-${HOME}/projects/language-table}"
 LANGTABLE_PYTHON="${LANGTABLE_PYTHON:-/home/sidhraja/miniconda3/envs/ltvenv/bin/python}"
 SMOLVLA_CHECKPOINT="${SMOLVLA_CHECKPOINT:-Sidharth-R/langtable-smolvla-finetuned}"
+LAVA_CHECKPOINT="${LAVA_CHECKPOINT:-/home/sidhraja/projects/LaMer/checkpoints/bc_resnet_sim_checkpoint_955000}"
 RUN_NAME="${RUN_NAME:-api_rollout}"
+POLICY="${POLICY:-smolvla}"
 
 VLLM_URL="${VLLM_URL:-http://127.0.0.1:8000/v1}"
 MODEL="${MODEL:-Qwen/Qwen3-4B}"
 NUM_EPISODES="${NUM_EPISODES:-1}"
-NUM_ENVS="${NUM_ENVS:-8}"
+NUM_ENVS="${NUM_ENVS:-64}"
 MAX_TURNS="${MAX_TURNS:-10}"
 MAX_INNER_STEPS="${MAX_INNER_STEPS:-50}"
 ENV_PORT="${ENV_PORT:-50063}"
@@ -86,12 +88,12 @@ XLA_PYTHON_CLIENT_PREALLOCATE=false \
 XLA_PYTHON_CLIENT_MEM_FRACTION=0.4 \
 ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --host 0.0.0.0 --port ${ENV_PORT} \
-    --num_envs ${NUM_ENVS} --group_n ${NUM_ENVS} \
+    --num_envs 1 --group_n ${NUM_ENVS} \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts 1 \
     --max_turns ${MAX_TURNS} \
     --reward_type tetris_shape \
     --split val \
-    --policy smolvla \
+    --policy ${POLICY} \
     --vla_checkpoint "${SMOLVLA_CHECKPOINT}" \
     --chunk_size 10 \
     > >(tee -a "${LOG_FILE}") 2>&1 \
@@ -134,7 +136,7 @@ cd "${LAMER_DIR}"
     --max_turns "${MAX_TURNS}" \
     --output "${OUTPUT_FILE}" \
     --video_dir "${VIDEO_DIR}" \
-    --human
+    --policy replay
     2>&1 | tee -a "${LOG_FILE}"
 
 echo ""

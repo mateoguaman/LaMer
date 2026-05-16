@@ -147,6 +147,14 @@ class LanguageTableEnvironmentManager:
         """Close the remote connection."""
         self._remote.close()
 
+    def get_object_positions(self):
+        """Return diagnostic gripper/block positions from the remote env."""
+        return self._remote.get_object_positions()
+
+    def render(self):
+        """Return RGB render frames from the remote env."""
+        return self._remote.render()
+
     # ------------------------------------------------------------------
     # Play phase
     # ------------------------------------------------------------------

@@ -35,9 +35,9 @@ def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--remote_address", required=True,
                    help="HOST:PORT of the Language Table env server")
-    p.add_argument("--vllm_url", required=True,
+    p.add_argument("--vllm_url", default=None,
                    help="Base URL of vLLM server, e.g. http://HOST:PORT/v1")
-    p.add_argument("--model", required=True,
+    p.add_argument("--model", default=None,
                    help="Model name as served by vLLM")
     p.add_argument("--val_data",
                    default=os.path.expanduser("~/data/verl-agent/text/test.parquet"),
@@ -58,9 +58,18 @@ def parse_args():
                    help="Append /no_think to suppress Qwen3 chain-of-thought (default: on)")
     p.add_argument("--think", dest="no_think", action="store_false",
                    help="Allow Qwen3 chain-of-thought reasoning")
+    p.add_argument("--policy", choices=("api", "human", "replay"), default="api",
+                   help="Outer-loop policy: query vLLM, read stdin, or replay instructions")
     p.add_argument("--human", action="store_true", default=False,
                    help="Read action commands from stdin instead of querying the LLM; "
                         "the same command is broadcast to all active envs each step")
+    p.add_argument("--replay_instruction", action="append", default=[
+        "push the green star to the bottom center",
+"push the yellow pentagon to the top center",
+"push the blue cube to the center right"],
+                   help="Instruction to replay for --policy replay; repeat for multiple steps")
+    p.add_argument("--replay_instructions_file", type=str, default=None,
+                   help="Path to replay instructions, either JSON list or one instruction per line")
     return p.parse_args()
 
 
@@ -78,6 +87,26 @@ def build_env(remote_address):
 def build_client(vllm_url):
     from openai import OpenAI
     return OpenAI(base_url=vllm_url, api_key="EMPTY")
+
+
+def load_replay_instructions(args):
+    instructions = []
+    if args.replay_instructions_file:
+        with open(args.replay_instructions_file, "r") as f:
+            content = f.read()
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = [
+                line.strip()
+                for line in content.splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
+        if not isinstance(parsed, list) or not all(isinstance(x, str) for x in parsed):
+            raise ValueError("--replay_instructions_file must contain a JSON list of strings")
+        instructions.extend(x.strip() for x in parsed if x.strip())
+    instructions.extend(x.strip() for x in args.replay_instruction if x.strip())
+    return instructions
 
 
 def load_num_episodes(val_data, cap):
@@ -155,6 +184,123 @@ def save_video(frames, path, fps=2):
     imageio.mimsave(path, frames, fps=fps)
 
 
+def _as_uint8_rgb(image):
+    """Normalize common image array layouts to uint8 HWC RGB."""
+    arr = np.asarray(image)
+    if arr.ndim == 4:
+        arr = arr[0]
+    if arr.ndim == 2:
+        arr = np.repeat(arr[..., None], 3, axis=-1)
+    if arr.ndim != 3:
+        raise ValueError(f"expected image with 2 or 3 dims, got shape {arr.shape}")
+    if arr.shape[0] in (1, 3, 4) and arr.shape[-1] not in (1, 3, 4):
+        arr = np.moveaxis(arr, 0, -1)
+    if arr.shape[-1] == 1:
+        arr = np.repeat(arr, 3, axis=-1)
+    elif arr.shape[-1] == 4:
+        arr = arr[..., :3]
+    elif arr.shape[-1] != 3:
+        raise ValueError(f"expected RGB-like image, got shape {arr.shape}")
+
+    if arr.dtype != np.uint8:
+        arr = arr.astype(np.float32)
+        if arr.size and np.nanmax(arr) <= 1.0:
+            arr = arr * 255.0
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    return arr
+
+
+def _obs_images(obs):
+    images = obs.get("image") if isinstance(obs, dict) else None
+    if images is None:
+        return None
+    if isinstance(images, np.ndarray):
+        if images.ndim == 4:
+            return [images[i] for i in range(images.shape[0])]
+        return [images]
+    return list(images)
+
+
+def save_observation_grid(env, obs, batch_idx, step_idx, out_dir="results/obs"):
+    """Save the current batch observation as a grid PNG for human control."""
+    images = _obs_images(obs)
+    if images is None and hasattr(env, "render"):
+        try:
+            images = env.render()
+        except Exception as exc:
+            print(f"  observation image unavailable: {exc}")
+            return
+
+    if isinstance(images, np.ndarray):
+        images = _obs_images({"image": images})
+
+    if not images:
+        print("  observation image unavailable: no RGB frames")
+        return
+
+    try:
+        frames = [_as_uint8_rgb(image) for image in images if image is not None]
+    except Exception as exc:
+        print(f"  observation image unavailable: {exc}")
+        return
+
+    if not frames:
+        print("  observation image unavailable: empty RGB frames")
+        return
+
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, f"batch{batch_idx:04d}_step{step_idx:03d}_obs_grid.png")
+    from PIL import Image
+    Image.fromarray(make_grid_frame(frames, step_idx)).save(path)
+    print(f"  observation image -> {path}")
+
+
+def _format_vec(vec):
+    return "[" + ", ".join(f"{float(x):.6f}" for x in vec) + "]"
+
+
+def print_position_stats(env, batch_idx, step_idx):
+    """Print mean/std of gripper and block xyz positions across envs."""
+    try:
+        snapshots = env.get_object_positions()
+    except Exception as exc:
+        print(f"  position stats unavailable: {exc}")
+        return
+
+    if not snapshots:
+        print("  position stats unavailable: empty snapshot")
+        return
+
+    grippers = np.asarray([s["gripper"] for s in snapshots], dtype=np.float64)
+    print(
+        f"  batch {batch_idx} step {step_idx} gripper "
+        f"mean={_format_vec(grippers.mean(axis=0))} "
+        f"std={_format_vec(grippers.std(axis=0))}"
+    )
+
+    block_names = sorted({
+        name
+        for snapshot in snapshots
+        for name in snapshot.get("blocks", {})
+    })
+    for name in block_names:
+        poses = np.asarray(
+            [
+                snapshot["blocks"][name]
+                for snapshot in snapshots
+                if name in snapshot.get("blocks", {})
+            ],
+            dtype=np.float64,
+        )
+        if poses.size == 0:
+            continue
+        print(
+            f"  batch {batch_idx} step {step_idx} block {name} "
+            f"mean={_format_vec(poses.mean(axis=0))} "
+            f"std={_format_vec(poses.std(axis=0))}"
+        )
+
+
 def _llm_call(client, model, prompt, max_tokens, temperature, no_think):
     resp = client.chat.completions.create(
         model=model,
@@ -171,12 +317,13 @@ def _human_call(batch_idx, step_idx, num_envs):
     try:
         cmd = input(f"[batch {batch_idx} step {step_idx} / {num_envs} envs] command> ").strip()
     except EOFError:
-        cmd = ""
+        return None
     return cmd
 
 
 def run_batch(env, client, model, max_turns, temperature, max_tokens,
-              video_dir, batch_idx, no_think=True, human=False):
+              video_dir, batch_idx, no_think=True, policy="api",
+              replay_instructions=None):
     """Run one full episode batch across all parallel envs.
 
     Returns a list of per-env result dicts, each with keys:
@@ -191,15 +338,37 @@ def run_batch(env, client, model, max_turns, temperature, max_tokens,
     turns_taken = [0] * num_envs
     wons = [False] * num_envs
     active = [True] * num_envs
+    terminated = False
 
     all_episode_grid_frames = []
 
     for step_idx in range(effective_max):
         prompts = obs['text']  # list[str], length = num_envs
+        active_at_step = list(active)
 
         text_actions = [""] * num_envs
-        if human:
+        if policy == "human":
+            save_observation_grid(env, obs, batch_idx, step_idx)
             cmd = _human_call(batch_idx, step_idx, num_envs)
+            if cmd is None:
+                print(f"  batch {batch_idx} step {step_idx}: EOF received; terminating")
+                terminated = True
+                break
+            for i in range(num_envs):
+                if active[i]:
+                    # modify cmd to stress test tokenizer
+                    # if i % 2 == 0:
+                    #     new_cmd = f"{cmd} corner cube"
+                    # else:
+                    #     new_cmd = cmd
+                    text_actions[i] = f"<action>{cmd}</action>"
+        elif policy == "replay":
+            replay_instructions = replay_instructions or []
+            if step_idx >= len(replay_instructions):
+                print(f"  batch {batch_idx} step {step_idx}: replay finished; terminating")
+                terminated = True
+                break
+            cmd = replay_instructions[step_idx]
             for i in range(num_envs):
                 if active[i]:
                     text_actions[i] = f"<action>{cmd}</action>"
@@ -223,6 +392,17 @@ def run_batch(env, client, model, max_turns, temperature, max_tokens,
                 print(f"  batch {batch_idx} env {i} step {step_idx}: {goal}")
 
         obs, rewards, dones, infos = env.step(text_actions, phase="play")
+        step_wins = [
+            bool(infos[i].get("won", False))
+            for i in range(num_envs)
+            if active_at_step[i]
+        ]
+        step_success_rate = sum(step_wins) / len(step_wins) if step_wins else 0.0
+        print(
+            f"  batch {batch_idx} step {step_idx} success: "
+            f"{sum(step_wins)}/{len(step_wins)} = {step_success_rate:.3f}"
+        )
+        print_position_stats(env, batch_idx, step_idx)
 
         # Build grid frames for this LLM step and accumulate for episode video
         max_inner = max((len(infos[i].get("frames", [])) for i in range(num_envs)), default=0)
@@ -262,16 +442,31 @@ def run_batch(env, client, model, max_turns, temperature, max_tokens,
         save_video(all_episode_grid_frames, vid_path, fps=10)
         print(f"  episode video -> {vid_path}")
 
+    if policy == "replay" and len(replay_instructions or []) <= effective_max:
+        terminated = True
+
     return [
         {"won": wons[i], "total_reward": total_rewards[i], "turns_taken": turns_taken[i]}
         for i in range(num_envs)
-    ]
+    ], terminated
 
 
 def main():
     args = parse_args()
+    if args.human:
+        args.policy = "human"
+    replay_instructions = load_replay_instructions(args)
+    if args.policy == "api" and (args.vllm_url is None or args.model is None):
+        raise ValueError("--policy api requires --vllm_url and --model")
+    if args.policy == "replay" and not replay_instructions:
+        raise ValueError(
+            "--policy replay requires --replay_instruction or --replay_instructions_file"
+        )
+    if args.policy in ("human", "replay") and args.video_dir is None:
+        args.video_dir = os.path.join("results", f"api_rollout_{args.policy}_videos")
+
     env = build_env(args.remote_address)
-    client = build_client(args.vllm_url)
+    client = None if args.policy in ("human", "replay") else build_client(args.vllm_url)
     n_episodes = load_num_episodes(args.val_data, args.num_episodes)
 
     num_envs = env.num_processes
@@ -288,11 +483,12 @@ def main():
 
     try:
         for batch_idx in range(n_batches):
-            batch_results = run_batch(
+            batch_results, terminated = run_batch(
                 env, client, args.model, args.max_turns,
                 args.temperature, args.max_tokens,
                 args.video_dir, batch_idx, no_think=args.no_think,
-                human=args.human,
+                policy=args.policy,
+                replay_instructions=replay_instructions,
             )
             for env_i, r in enumerate(batch_results):
                 if ep_counter >= n_episodes:
@@ -305,6 +501,9 @@ def main():
                       f"won={r['won']}, reward={r['total_reward']:.3f}, "
                       f"turns={r['turns_taken']}")
                 ep_counter += 1
+            if terminated:
+                print("Rollout terminated by policy.")
+                break
     finally:
         env.close()
 

@@ -17,6 +17,8 @@ max_turns=${MAX_TURNS:-5}
 learning_rate=${LEARNING_RATE:-1e-6}
 batch_size=${BATCH_SIZE:-64}
 micro_batch_size=${MICRO_BATCH_SIZE:-16}
+tensor_model_parallel_size=${TENSOR_MODEL_PARALLEL_SIZE:-2}
+trainer_n_gpus_per_node=${TRAIN_N_GPUS_PER_NODE:-4}
 use_kl_loss=${USE_KL_LOSS:-False}
 kl_loss_coef=${KL_LOSS_COEF:-0.001}
 kl_loss_type=${KL_LOSS_TYPE:-low_var_kl}
@@ -55,7 +57,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-4B \
+    actor_rollout_ref.model.path=Qwen/Qwen3.5-0.8B \
     +actor_rollout_ref.model.enable_thinking=False \
     actor_rollout_ref.actor.optim.lr=$learning_rate \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -68,7 +70,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=$tensor_model_parallel_size \
     actor_rollout_ref.rollout.name=$ENGINE \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.enable_chunked_prefill=False \
@@ -102,7 +104,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name='lamer' \
     trainer.experiment_name=${RUN_NAME:-language_table_lamer_qwen3_4b} \
     trainer.default_local_dir=${TRAINER_LOCAL_DIR:-checkpoints/lamer/${RUN_NAME:-language_table_lamer_qwen3_4b}} \
-    trainer.n_gpus_per_node=4 \
+    trainer.n_gpus_per_node=$trainer_n_gpus_per_node \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=5 \
