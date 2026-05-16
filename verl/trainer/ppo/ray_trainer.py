@@ -812,10 +812,24 @@ class RayPPOTrainer:
             table = wandb.Table(columns=columns, data=self._val_traj_rows)
             wandb.log({"val/cot_trajectory": table}, step=self.global_steps)
 
+    def _maybe_log_success_by_seed(self, rows, split):
+        if not rows or 'wandb' not in self.config.trainer.logger:
+            return
+        import wandb
+        grouped = defaultdict(list)
+        for seed, attempt, won in rows:
+            grouped[(seed, attempt)].append(won)
+        data = [[seed, attempt, float(np.mean(wons))] for (seed, attempt), wons in sorted(grouped.items())]
+        wandb.log(
+            {f"{split}/success_by_seed": wandb.Table(columns=["low_level_seed", "attempt", "success_rate"], data=data)},
+            step=self.global_steps,
+        )
+
     def _validate(self):
         reward_tensor_lst = []
         data_source_lst = []
         success_rate_dict = {}
+        success_by_seed_rows = []
 
         # Lists to collect samples for the table
         sample_inputs = []
@@ -874,6 +888,7 @@ class RayPPOTrainer:
                                                                     envs=self.val_envs,
                                                                     is_train=False,
                                                                     )
+            success_by_seed_rows.extend(test_output_gen_batch.meta_info.pop("success_by_seed_rows", []) if test_output_gen_batch.meta_info else [])
             print('validation generation end')
             del test_batch
             test_batch = test_output_gen_batch
@@ -904,6 +919,7 @@ class RayPPOTrainer:
                         assert test_batch.non_tensor_batch[k][0] == test_batch.non_tensor_batch[k][i], f'not all success_rate are the same, 0: {test_batch.non_tensor_batch[k][0]}, {i}: {test_batch.non_tensor_batch[k][i]}'
 
         # self._maybe_log_val_generations(inputs=sample_inputs, outputs=sample_outputs, scores=sample_scores)
+        self._maybe_log_success_by_seed(success_by_seed_rows, "val")
         self._maybe_log_val_trajectory(traj_cot_logs)
         self._maybe_log_val_video(traj_cot_logs)
 
@@ -1214,6 +1230,7 @@ class RayPPOTrainer:
 
                     # Extract VLA health metrics (from language_table env server)
                     # so they get logged to wandb alongside training metrics.
+                    self._maybe_log_success_by_seed(batch.meta_info.pop("success_by_seed_rows", []) if batch.meta_info else [], "training")
                     vla_metrics = batch.meta_info.pop("vla_metrics", None) if batch.meta_info else None
                     if vla_metrics:
                         metrics.update(vla_metrics)

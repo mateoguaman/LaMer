@@ -289,7 +289,7 @@ class TrajectoryCollector:
             gen_batch: DataProto, 
             actor_rollout_wg, 
             envs,
-            ) -> DataProto:
+            ):
         """
         Collects trajectories through parallel agent-environment agent_loop.
         Parameters:
@@ -452,6 +452,15 @@ class TrajectoryCollector:
                     total_batch_list=total_batch_list,
                     episode_lengths=episode_lengths,
                     )
+        seeds = [
+            next((info.get("low_level_seed") for info in infos if "low_level_seed" in info), None)
+            for infos in total_infos
+        ]
+        success_by_seed_rows = [
+            [int(seed), key, float(won)]
+            for key, vals in success.items() if "success_rate" in key
+            for seed, won in zip(seeds, vals) if seed is not None
+        ]
 
         # Aggregate VLA health stats across all outer steps in this rollout.
         # Same aggregation logic as LAVAPolicy.get_and_reset_step_stats():
@@ -488,7 +497,7 @@ class TrajectoryCollector:
             inner_vals = [s.get("vla/n_inner_steps", 0) for s in _vla_step_stats]
             vla_metrics["vla/total_inner_steps"] = float(sum(inner_vals))
 
-        return total_batch_list, episode_lengths, success, traj_uid, traj_cot_logs, vla_metrics
+        return total_batch_list, episode_lengths, success, traj_uid, traj_cot_logs, vla_metrics, success_by_seed_rows
     
     def multi_turn_loop(
             self,
@@ -496,7 +505,7 @@ class TrajectoryCollector:
             actor_rollout_wg, 
             envs,
             is_train: bool = True,
-            ) -> DataProto:
+            ):
         """
         Select and run the appropriate rollout loop (dynamic or vanilla).
 
@@ -511,7 +520,7 @@ class TrajectoryCollector:
         """
         num_attempts = envs.num_attempts
         # Initial observations from the environment
-        total_batch_list, total_episode_lengths, total_success, total_traj_uid, traj_cot_logs, vla_metrics = \
+        total_batch_list, total_episode_lengths, total_success, total_traj_uid, traj_cot_logs, vla_metrics, success_by_seed_rows = \
             self.vanilla_multi_turn_loop(
             gen_batch=gen_batch,
             actor_rollout_wg=actor_rollout_wg,
@@ -524,7 +533,7 @@ class TrajectoryCollector:
         total_episode_rewards, total_discounted_returns = self.credit_assignment(total_batch_list, num_attempts, self.step_gamma, self.traj_gamma)
 
         # Create trajectory data
-        gen_batch_output: DataProto = self.gather_rollout_data(
+        gen_batch_output = self.gather_rollout_data(
             total_batch_list=total_batch_list,
             episode_rewards=total_episode_rewards,
             discounted_returns=total_discounted_returns,
@@ -533,10 +542,12 @@ class TrajectoryCollector:
             traj_uid=total_traj_uid,
         )
 
+        if (success_by_seed_rows or vla_metrics) and gen_batch_output.meta_info is None:
+            gen_batch_output.meta_info = {}
+        if success_by_seed_rows:
+            gen_batch_output.meta_info["success_by_seed_rows"] = success_by_seed_rows
         # Attach VLA health metrics so the trainer can log them to wandb
         if vla_metrics:
-            if gen_batch_output.meta_info is None:
-                gen_batch_output.meta_info = {}
             gen_batch_output.meta_info["vla_metrics"] = vla_metrics
 
         logger.info("Rollout finished")
