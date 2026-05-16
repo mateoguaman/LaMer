@@ -4,10 +4,25 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_LAMER_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-if [ -f "${BASE_LAMER_DIR}/.env.language_table" ]; then
-    # shellcheck disable=SC1091
-    source "${BASE_LAMER_DIR}/.env.language_table"
-fi
+LAVA=false
+
+for arg in "$@"; do
+	    if [ "$arg" = "--lava" ]; then
+		            LAVA=true
+			            break
+				        fi
+				done
+
+				if [ "$LAVA" = true ]; then
+					    ENV_FILE="${BASE_LAMER_DIR}/.env.language_table_lava"
+				    else
+					        ENV_FILE="${BASE_LAMER_DIR}/.env.language_table_smolvla"
+				fi
+
+				if [ -f "$ENV_FILE" ]; then
+					    # shellcheck disable=SC1091
+					        source "$ENV_FILE"
+				fi
 if [ -f "${BASE_LAMER_DIR}/.env.language_table.secrets" ]; then
     # shellcheck disable=SC1091
     source "${BASE_LAMER_DIR}/.env.language_table.secrets"
@@ -54,6 +69,7 @@ export VAL_TASK_COLORS="${VAL_TASK_COLORS:-}"
 export VAL_TASK_N_STEPS="${VAL_TASK_N_STEPS:-3}"
 export VLA_CHECKPOINT_DIR="${VLA_CHECKPOINT_DIR:-}"
 export VLA_CHECKPOINT="${VLA_CHECKPOINT:-}"
+export VLA_POLICY="${VLA_POLICY-smolvla}"
 export SLURM_LOG_DIR="${SLURM_LOG_DIR:-}"
 export HF_HOME="${HF_HOME:-}"
 export WANDB_DATA_DIR="${WANDB_DATA_DIR:-}"
