@@ -29,7 +29,7 @@ RUN_NAME="${RUN_NAME:-language_table_lamer_qwen3_4b}"
 REWARD_TYPE="${REWARD_TYPE:-block2block}"
 VLA_POLICY="${VLA_POLICY:-smolvla}"
 ADV_ESTIMATOR="${ADV_ESTIMATOR:-gigpo}"
-MAX_SEEDS="${MAX_SEEDS:-16}"
+MAX_SEEDS="${MAX_SEEDS:-1}"
 
 if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "ERROR: CHECKPOINT_ROOT is not set."

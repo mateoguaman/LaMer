@@ -33,6 +33,7 @@ LAMER_DIR="${LAMER_DIR:-${BASE_LAMER_DIR}}"
 SLURM_SCRIPT="${LAMER_DIR}/scripts/slurm/lamer_language_table.slurm"
 DEFAULT_LANGTABLE_DIR="${LAMER_DIR}/../language-table"
 
+export MAX_SEEDS=1
 export LAMER_DIR="${LAMER_DIR}"
 export LANGTABLE_DIR="${LANGTABLE_DIR:-${DEFAULT_LANGTABLE_DIR}}"
 export LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-${LANGTABLE_DIR}/ltvenv}"
