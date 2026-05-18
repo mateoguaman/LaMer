@@ -819,9 +819,37 @@ class RayPPOTrainer:
         grouped = defaultdict(list)
         for seed, attempt, won in rows:
             grouped[(seed, attempt)].append(won)
-        data = [[seed, attempt, float(np.mean(wons))] for (seed, attempt), wons in sorted(grouped.items())]
+        data = [
+            [seed, attempt, float(np.mean(wons)), len(wons)]
+            for (seed, attempt), wons in sorted(grouped.items())
+        ]
+
+        history_attr = f"_{split}_success_by_seed_rows"
+        history_rows = getattr(self, history_attr, [])
+        history_rows.extend(
+            [self.global_steps, seed, attempt, success_rate, n]
+            for seed, attempt, success_rate, n in data
+        )
+        setattr(self, history_attr, history_rows)
+
+        over_time_table = wandb.Table(
+            columns=["global_step", "low_level_seed", "attempt", "success_rate", "num_episodes"],
+            data=history_rows,
+        )
         wandb.log(
-            {f"{split}/success_by_seed": wandb.Table(columns=["low_level_seed", "attempt", "success_rate"], data=data)},
+            {
+                f"{split}/success_by_seed": wandb.Table(
+                    columns=["low_level_seed", "attempt", "success_rate", "num_episodes"],
+                    data=data,
+                ),
+                f"{split}/success_by_seed_over_time": over_time_table,
+                f"{split}/success_by_seed_over_time_plot": wandb.plot.line(
+                    over_time_table,
+                    "global_step",
+                    "success_rate",
+                    title=f"{split} success by seed over time",
+                ),
+            },
             step=self.global_steps,
         )
 
