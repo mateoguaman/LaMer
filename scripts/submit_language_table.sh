@@ -33,7 +33,7 @@ LAMER_DIR="${LAMER_DIR:-${BASE_LAMER_DIR}}"
 SLURM_SCRIPT="${LAMER_DIR}/scripts/slurm/lamer_language_table.slurm"
 DEFAULT_LANGTABLE_DIR="${LAMER_DIR}/../language-table"
 
-export MAX_SEEDS=1
+export MAX_SEEDS="${MAX_SEEDS:-1}"
 export LAMER_DIR="${LAMER_DIR}"
 export LANGTABLE_DIR="${LANGTABLE_DIR:-${DEFAULT_LANGTABLE_DIR}}"
 export LANGTABLE_CONDA_ENV="${LANGTABLE_CONDA_ENV:-${LANGTABLE_DIR}/ltvenv}"
@@ -80,6 +80,7 @@ export WANDB_API_KEY="${WANDB_API_KEY:-}"
 export HF_TOKEN="${HF_TOKEN:-}"
 export GOOGLE_API_KEY="${GOOGLE_API_KEY:-}"
 export TILLICUM="${TILLICUM:-True}"
+export REWARD_KWARGS="${REWARD_KWARGS:-}"
 
 if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "ERROR: CHECKPOINT_ROOT is not set."

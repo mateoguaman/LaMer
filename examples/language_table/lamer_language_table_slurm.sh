@@ -68,7 +68,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=32 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=$ENGINE \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.enable_chunked_prefill=False \
@@ -102,7 +102,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.project_name='lamer' \
     trainer.experiment_name=${RUN_NAME:-language_table_lamer_qwen3_4b} \
     trainer.default_local_dir=${TRAINER_LOCAL_DIR:-checkpoints/lamer/${RUN_NAME:-language_table_lamer_qwen3_4b}} \
-    trainer.n_gpus_per_node=4 \
+    trainer.n_gpus_per_node=1 \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=5 \

@@ -4,7 +4,7 @@
 #SBATCH --qos=normal
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:5
+#SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=800G
 #SBATCH --time=24:00:00
@@ -152,8 +152,8 @@ export PYTHONPATH="${LANGTABLE_DIR}:${PYTHONPATH:-}"
 # For LAVA, this also avoids JAX preallocating training GPU memory.
 # ENV_SERVER_GPU=0
 # TRAIN_GPUS="1,2,3,4"
-ENV_SERVER_GPU=4
-TRAIN_GPUS="0,1,2,3"
+ENV_SERVER_GPU=1
+TRAIN_GPUS=0
 
 ########################################
 ### Step 0: Download LAVA checkpoint ###
@@ -229,6 +229,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
     --reward_type ${REWARD_TYPE} \
+    --reward_kwargs "${REWARD_KWARGS}" \
     ${PREPROCESS_FLAG} \
     --split train \
     --max_seeds ${MAX_SEEDS} \
@@ -251,6 +252,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --max_inner_steps ${MAX_INNER_STEPS} --num_attempts ${NUM_ATTEMPTS} \
     --max_turns ${MAX_TURNS} --do_reflection \
     --reward_type ${REWARD_TYPE} \
+    --reward_kwargs "${REWARD_KWARGS}" \
     ${PREPROCESS_FLAG} \
     --split val \
     --max_seeds ${MAX_SEEDS} \
