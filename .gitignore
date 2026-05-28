@@ -22,4 +22,5 @@ CLAUDE.md
 *.err
 *.out
 results/
+plot/
 .env.language_table_local

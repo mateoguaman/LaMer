@@ -196,7 +196,7 @@ def run_batch(env, client, model, max_turns, temperature, max_tokens,
 
     for step_idx in range(effective_max):
         prompts = obs['text']  # list[str], length = num_envs
-
+        print("prompt: ", prompts[0])
         text_actions = [""] * num_envs
         if human:
             cmd = _human_call(batch_idx, step_idx, num_envs)

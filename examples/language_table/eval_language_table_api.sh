@@ -47,6 +47,7 @@ export HF_HUB_ETAG_TIMEOUT=60
 export HF_HUB_ENABLE_HF_TRANSFER=1
 
 LOG_FILE="${OUTPUT_DIR}/api_rollout_${RUN_NAME}.log"
+REWARD_KWARGS='{"shapes":["S"]}'
 
 mkdir -p "${OUTPUT_DIR}"
 
@@ -92,6 +93,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --reward_type tetris_shape \
     --split val \
     --policy smolvla \
+    --reward_kwargs "${REWARD_KWARGS}" \
     --vla_checkpoint "${SMOLVLA_CHECKPOINT}" \
     --chunk_size 10 \
     > >(tee -a "${LOG_FILE}") 2>&1 \

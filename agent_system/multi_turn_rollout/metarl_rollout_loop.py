@@ -452,15 +452,26 @@ class TrajectoryCollector:
                     total_batch_list=total_batch_list,
                     episode_lengths=episode_lengths,
                     )
-        seeds = [
-            next((info.get("low_level_seed") for info in infos if "low_level_seed" in info), None)
-            for infos in total_infos
-        ]
-        success_by_seed_rows = [
-            [int(seed), key, float(won)]
-            for key, vals in success.items() if "success_rate" in key
-            for seed, won in zip(seeds, vals) if seed is not None
-        ]
+        success_by_seed_rows = []
+        for bs, infos in enumerate(total_infos):
+            seed = next((info.get("low_level_seed") for info in infos if "low_level_seed" in info), None)
+            if seed is None:
+                continue
+
+            attempted = [False for _ in range(num_attempts)]
+            wons = [False for _ in range(num_attempts)]
+            for step, info in zip(total_batch_list[bs], infos):
+                if not step["active_masks"] or step["phase"] != "play":
+                    continue
+                traj_idx = step["traj_idx"]
+                attempted[traj_idx] = True
+                wons[traj_idx] = wons[traj_idx] or info.get("won", False)
+
+            success_by_seed_rows.extend(
+                [int(seed), traj_idx, float(wons[traj_idx])]
+                for traj_idx in range(num_attempts)
+                if attempted[traj_idx]
+            )
 
         # Aggregate VLA health stats across all outer steps in this rollout.
         # Same aggregation logic as LAVAPolicy.get_and_reset_step_stats():

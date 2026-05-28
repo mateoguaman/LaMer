@@ -836,6 +836,10 @@ class RayPPOTrainer:
             columns=["global_step", "low_level_seed", "attempt", "success_rate", "num_episodes"],
             data=history_rows,
         )
+        scalar_metrics = {
+            f"{split}/success_by_seed/seed_{seed}/attempt_{attempt}": success_rate
+            for seed, attempt, success_rate, _ in data
+        }
         wandb.log(
             {
                 f"{split}/success_by_seed": wandb.Table(
@@ -849,6 +853,7 @@ class RayPPOTrainer:
                     "success_rate",
                     title=f"{split} success by seed over time",
                 ),
+                **scalar_metrics,
             },
             step=self.global_steps,
         )
