@@ -114,5 +114,6 @@ python3 -m verl.trainer.main_ppo \
     trainer.log_val_videos=8 \
     trainer.max_actor_ckpt_to_keep=1 \
     trainer.max_critic_ckpt_to_keep=1 \
-    trainer.resume_mode=disable \
+    trainer.resume_mode=resume_path \
+    trainer.resume_from_path=/gpfs/scrubbed/sidhraja/.cache/checkpoints/lamer/langtable_multistep_group_size_16_kl_reward_001_8/127318/global_step_100 \
     2>&1 | tee -a ${RUN_LOG_PATH:-language_table_slurm.log}
