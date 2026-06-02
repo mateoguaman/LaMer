@@ -72,6 +72,8 @@ class _CrossVenvUnpickler(pickle.Unpickler):
     _CLASS_MAP = {
         ("language_table.lamer.protocol", "EnvRequest"): EnvRequest,
         ("language_table.lamer.protocol", "EnvResponse"): EnvResponse,
+        ("robolab.lamer.protocol", "EnvRequest"): EnvRequest,
+        ("robolab.lamer.protocol", "EnvResponse"): EnvResponse,
     }
 
     def find_class(self, module: str, name: str):
