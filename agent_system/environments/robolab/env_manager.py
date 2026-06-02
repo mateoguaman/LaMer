@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -38,6 +38,10 @@ class RobolabEnvironmentManager:
             {} for _ in range(self.num_processes)
         ]
         self.reflections: List[Dict] = [{} for _ in range(self.num_processes)]
+        # Per-env image storage: [env_i][traj_idx][turn_idx] = np.ndarray
+        self._traj_images: List[defaultdict] = [
+            defaultdict(dict) for _ in range(self.num_processes)
+        ]
 
     # ------------------------------------------------------------------
     # Core interface
@@ -50,14 +54,20 @@ class RobolabEnvironmentManager:
         self.curr_turn_idx = 0
         self.reflections = [{} for _ in range(self.num_processes)]
         self._last_commands = [{} for _ in range(self.num_processes)]
+        self._traj_images = [defaultdict(dict) for _ in range(self.num_processes)]
 
         text_obs = obs.get("text", [""] * self.num_processes)
         self._init_text_obs = list(text_obs)
         self._last_text_obs = list(text_obs)
 
+        init_imgs = obs.get("image")
+        if init_imgs is not None:
+            for i in range(self.num_processes):
+                self._traj_images[i][0][0] = init_imgs[i]
+
         observations = {
             "text": self._build_play_prompts(),
-            "image": obs.get("image"),
+            "image": self._build_image_lists(),
             "anchor": text_obs,
         }
         return observations, infos
@@ -77,9 +87,15 @@ class RobolabEnvironmentManager:
         text_obs = obs.get("text", [""] * self.num_processes)
         self._last_text_obs = list(text_obs)
 
+        new_imgs = obs.get("image")
+        if new_imgs is not None:
+            for i in range(self.num_processes):
+                self._traj_images[i][self.curr_traj_idx] = {}
+                self._traj_images[i][self.curr_traj_idx][0] = new_imgs[i]
+
         observations = {
             "text": self._build_play_prompts(),
-            "image": obs.get("image"),
+            "image": self._build_image_lists(),
             "anchor": text_obs,
         }
         return observations, infos
@@ -123,6 +139,34 @@ class RobolabEnvironmentManager:
         self._remote.close()
 
     # ------------------------------------------------------------------
+    # Image list construction
+    # ------------------------------------------------------------------
+
+    def _build_image_lists(self) -> List[List[np.ndarray]]:
+        """Return per-env ordered image lists matching the <image> token order in prompts.
+
+        Order: current obs → current-traj history → past attempt images (oldest first).
+        """
+        result = []
+        for i in range(self.num_processes):
+            imgs = []
+            # 1. current observation (matches the <image> in "# Observation")
+            curr_img = self._traj_images[i].get(self.curr_traj_idx, {}).get(self.curr_turn_idx)
+            if curr_img is not None:
+                imgs.append(curr_img)
+            # 2. current trajectory: states from turns 0..curr_turn_idx-1
+            for t in range(self.curr_turn_idx):
+                img = self._traj_images[i].get(self.curr_traj_idx, {}).get(t)
+                if img is not None:
+                    imgs.append(img)
+            # 3. past attempt images, oldest attempt first
+            for past_idx in range(self.curr_traj_idx):
+                past = self._traj_images[i].get(past_idx, {})
+                imgs.extend([past[t] for t in sorted(past)])
+            result.append(imgs)
+        return result
+
+    # ------------------------------------------------------------------
     # Play phase
     # ------------------------------------------------------------------
 
@@ -143,11 +187,17 @@ class RobolabEnvironmentManager:
         self._last_text_obs = (
             list(text_obs) if isinstance(text_obs, list) else [text_obs] * self.num_processes
         )
+
+        new_imgs = obs.get("image")
+        if new_imgs is not None:
+            for i in range(self.num_processes):
+                self._traj_images[i][self.curr_traj_idx][self.curr_turn_idx + 1] = new_imgs[i]
+
         self.curr_turn_idx += 1
 
         observations = {
             "text": self._build_play_prompts() if self.curr_turn_idx < self.max_turns else [""] * self.num_processes,
-            "image": obs.get("image"),
+            "image": self._build_image_lists(),
             "anchor": text_obs,
         }
         return observations, rewards, dones, infos
@@ -185,15 +235,14 @@ class RobolabEnvironmentManager:
             if self.curr_turn_idx == 0:
                 curr_traj = ""
             else:
-                current_commands = self._last_commands[i].get(self.curr_traj_idx, {})
-                parts = [current_commands[t] for t in range(self.curr_turn_idx) if current_commands.get(t)]
-                curr_traj = "; ".join(parts) if parts else ""
+                n_curr = len([t for t in range(self.curr_turn_idx)
+                               if t in self._traj_images[i].get(self.curr_traj_idx, {})])
+                curr_traj = "\n".join(["<image>"] * n_curr) if n_curr else ""
 
             past_traj = {}
             for traj_idx in range(self.curr_traj_idx):
-                past_commands = self._last_commands[i].get(traj_idx, {})
-                parts = [past_commands[t] for t in sorted(past_commands) if past_commands[t]]
-                past_traj[traj_idx] = "; ".join(parts) if parts else ""
+                n_past = len(self._traj_images[i].get(traj_idx, {}))
+                past_traj[traj_idx] = "\n".join(["<image>"] * n_past) if n_past else ""
 
             prompt = get_robolab_prompt(
                 phase="play",
@@ -211,13 +260,14 @@ class RobolabEnvironmentManager:
     def _build_reflect_prompts(self) -> List[str]:
         prompts = []
         for i in range(self.num_processes):
-            current_commands = self._last_commands[i].get(self.curr_traj_idx, {})
-            parts = [current_commands[t] for t in range(self.curr_turn_idx) if current_commands.get(t)]
-            curr_traj = "; ".join(parts) if parts else ""
+            turn_limit = min(self.curr_turn_idx, self.max_turns - 1)
+            n_curr = len([t for t in range(turn_limit)
+                           if t in self._traj_images[i].get(self.curr_traj_idx, {})])
+            curr_traj = "\n".join(["<image>"] * n_curr) if n_curr else ""
 
             prompt = get_robolab_prompt(
                 phase="reflect",
-                turn_idx=min(self.curr_turn_idx, self.max_turns - 1),
+                turn_idx=turn_limit,
                 traj_idx=self.curr_traj_idx,
                 language_instruction=self._init_text_obs[i],
                 curr_traj=curr_traj,

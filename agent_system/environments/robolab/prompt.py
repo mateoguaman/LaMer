@@ -45,13 +45,13 @@ The task was NOT successfully completed.
 """
 
 PAST_TRAJECTORY_AND_REFLECTION_TEMPLATE = """
-On trial #{traj_idx}, you issued the following commands:
+On trial #{traj_idx}, you observed the following states:
 {past_trajectory}
 The task was NOT successfully completed. Your reflection is:
 {reflection}"""
 
 HISTORY_ONLY_TEMPLATE = """
-On trial #{traj_idx}, you issued the following commands:
+On trial #{traj_idx}, you observed the following states:
 {past_trajectory}
 The task was NOT successfully completed."""
 
@@ -60,12 +60,12 @@ On trial #{traj_idx}, the task was NOT successfully completed. Your reflection i
 {reflection}"""
 
 CURR_TRAJ_AT_TRAJ1 = """
-You have already issued the following commands this trial:
+You have already observed the following states this trial:
 {current_trajectory}
 """
 
 CURR_TRAJ_AT_TRAJ2toN = """
-Currently you're on trial #{traj_idx}. You have already issued the following commands:
+Currently you're on trial #{traj_idx}. You have already observed the following states:
 {current_trajectory}
 """
 

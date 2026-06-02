@@ -58,6 +58,12 @@ class TaskRunner:
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.actor_rollout_ref.model.path, use_shm=config.actor_rollout_ref.model.get("use_shm", False))
 
+        validation_enabled = (
+            config.trainer.get("val_only", False)
+            or config.trainer.get("val_before_train", True)
+            or config.trainer.get("test_freq", 0) > 0
+        )
+
         if config.env.get('remote', False) and 'language_table' in config.env.env_name.lower():
             # Language Table uses remote envs but needs LaMer-side prompt/projection
             from agent_system.environments.language_table import make_envs
@@ -66,11 +72,11 @@ class TaskRunner:
             if config.env.get('sharded', False):
                 from agent_system.environments.remote import ShardedRemoteEnvironmentManager
                 envs = ShardedRemoteEnvironmentManager(list(config.env.remote_addresses))
-                val_envs = ShardedRemoteEnvironmentManager(list(config.env.remote_val_addresses))
+                val_envs = ShardedRemoteEnvironmentManager(list(config.env.remote_val_addresses)) if validation_enabled else None
             else:
                 from agent_system.environments.remote import RemoteEnvironmentManager
                 envs = RemoteEnvironmentManager(config.env.remote_address)
-                val_envs = RemoteEnvironmentManager(config.env.remote_val_address)
+                val_envs = RemoteEnvironmentManager(config.env.remote_val_address) if validation_enabled else None
         else:
             if 'sokoban' in config.env.env_name.lower():
                 from agent_system.environments.sokoban import make_envs

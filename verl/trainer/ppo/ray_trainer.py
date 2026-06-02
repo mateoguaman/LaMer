@@ -466,7 +466,10 @@ class RayPPOTrainer:
         n_gpus = config.trainer.n_gpus_per_node * config.trainer.nnodes
 
         # 1. Check total batch size for data correctness
-        real_train_batch_size = config.data.train_batch_size * config.actor_rollout_ref.rollout.n
+        # Env-based GRPO/GiGPO keeps actor rollout n=1 and expands groups via env.rollout.n.
+        env_rollout_n = config.env.get("rollout", {}).get("n", -1)
+        rollout_n = env_rollout_n if env_rollout_n > 0 else config.actor_rollout_ref.rollout.n
+        real_train_batch_size = config.data.train_batch_size * rollout_n
         assert real_train_batch_size % n_gpus == 0, f"real_train_batch_size ({real_train_batch_size}) must be divisible by total n_gpus ({n_gpus})."
 
         # A helper function to check "micro_batch_size" vs "micro_batch_size_per_gpu"

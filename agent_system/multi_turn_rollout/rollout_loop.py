@@ -70,7 +70,13 @@ class TrajectoryCollector:
         obs_text = obs_texts[item] if obs_texts is not None else None
         obs_image = obs_images[item] if obs_images is not None else None
         obs_anchor = obs_anchors[item] if obs_anchors is not None else None
-        is_multi_modal = obs_image is not None
+        if isinstance(obs_image, list):
+            image_list = [process_image(img) for img in obs_image if img is not None]
+        elif obs_image is not None:
+            image_list = [process_image(obs_image)]
+        else:
+            image_list = []
+        is_multi_modal = len(image_list) > 0
 
         _obs_anchor = torch_to_numpy(obs_anchor, is_object=True) if isinstance(obs_anchor, torch.Tensor) else obs_anchor
 
@@ -106,7 +112,7 @@ class TrajectoryCollector:
         if is_multi_modal:
             # Replace image placeholder with vision tokens
             raw_prompt = prompt_with_chat_template.replace('<image>', '<|vision_start|><|image_pad|><|vision_end|>')
-            row_dict['multi_modal_data'] = {'image': [process_image(obs_image)]}
+            row_dict['multi_modal_data'] = {'image': image_list}
             image_inputs = self.processor.image_processor(row_dict['multi_modal_data']['image'], return_tensors='pt')
             image_grid_thw = image_inputs['image_grid_thw']
             row_dict['multi_modal_inputs'] = {key: val for key, val in image_inputs.items()}
