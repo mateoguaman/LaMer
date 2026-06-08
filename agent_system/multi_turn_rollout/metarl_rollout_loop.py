@@ -117,7 +117,8 @@ class TrajectoryCollector:
         if is_multi_modal:
             # Replace image placeholder with vision tokens
             raw_prompt = prompt_with_chat_template.replace('<image>', '<|vision_start|><|image_pad|><|vision_end|>')
-            row_dict['multi_modal_data'] = {'image': [process_image(obs_image)]}
+            images = obs_image if isinstance(obs_image, list) else [obs_image]
+            row_dict['multi_modal_data'] = {'image': [process_image(img) for img in images]}
             image_inputs = self.processor.image_processor(row_dict['multi_modal_data']['image'], return_tensors='pt')
             image_grid_thw = image_inputs['image_grid_thw']
             row_dict['multi_modal_inputs'] = {key: val for key, val in image_inputs.items()}
@@ -364,7 +365,7 @@ class TrajectoryCollector:
             # Trajectory collection loop
             for _step in range(steps):
                 active_masks = np.logical_not(is_done)
-
+                # breakpoint()
                 batch = self.preprocess_batch(gen_batch=gen_batch, obs=obs)
 
                 batch_keys_to_pop = ["input_ids", "attention_mask", "position_ids"]
@@ -382,7 +383,7 @@ class TrajectoryCollector:
 
                 batch_input.meta_info = gen_batch.meta_info
                 batch_input.non_tensor_batch['active_masks'] = active_masks
-
+                # breakpoint()
                 batch_output = actor_rollout_wg.generate_sequences_agent(batch_input)
 
                 batch.non_tensor_batch['uid'] = uid_batch

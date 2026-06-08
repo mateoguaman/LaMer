@@ -28,7 +28,7 @@ LAMER_PYTHON="${LAMER_PYTHON:-/gscratch/weirdlab/sidhraja/miniconda3/envs/lamer}
 LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
 
 TASK="${TASK:-BananaInBowlTask}"
-NUM_ENVS="${NUM_ENVS:-64}"
+NUM_ENVS="${NUM_ENVS:-4}"
 MAX_TURNS="${MAX_TURNS:-5}"
 NUM_INNER_STEPS="${NUM_INNER_STEPS:-50}"
 NUM_ATTEMPTS="${NUM_ATTEMPTS:-3}"
@@ -41,7 +41,8 @@ case "${ENABLE_VALIDATION,,}" in
     *) ENABLE_VALIDATION=False ;;
 esac
 
-ADV_ESTIMATOR="${ADV_ESTIMATOR:-grpo}"
+ADV_ESTIMATOR="${ADV_ESTIMATOR:-gigpo}"
+DOWNSAMPLE_SCALE="${DOWNSAMPLE_SCALE:-0.3}"
 RUN_NAME="${RUN_NAME:-robolab_lamer_qwen3vl_4b}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-${LAMER_DIR}/checkpoints/lamer}"
 
@@ -253,12 +254,14 @@ export TRAIN_DATA_PATH VAL_DATA_PATH
 export TRAIN_NUM_ENVS VAL_NUM_ENVS
 export GROUP_SIZE ADV_ESTIMATOR
 export ENABLE_VALIDATION
-export NUM_ATTEMPTS MAX_TURNS
+export NUM_ATTEMPTS MAX_TURNS DOWNSAMPLE_SCALE
 export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
 export ENV_ADDRESS="127.0.0.1:${ENV_SERVER_PORT}"
 export VAL_ADDRESS="127.0.0.1:${VAL_SERVER_PORT}"
 export BATCH_SIZE="${NUM_ENVS}"
 export MICRO_BATCH_SIZE=1
+# debugging parameter
+export RAY_DEBUG=legacy
 
 source "$(conda info --base)/etc/profile.d/conda.sh"
 set +u

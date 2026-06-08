@@ -7,6 +7,8 @@ from agent_system.environments.remote import RemoteEnvironmentManager
 from .prompt import get_robolab_prompt
 from .projection import robolab_projection
 
+import cv2
+import uuid
 
 class RobolabEnvironmentManager:
     """Wraps a RemoteEnvironmentManager with prompt construction and projection.
@@ -68,7 +70,7 @@ class RobolabEnvironmentManager:
         observations = {
             "text": self._build_play_prompts(),
             "image": self._build_image_lists(),
-            "anchor": text_obs,
+            "anchor": [str(uuid.uuid4()) for _ in range(self.num_processes)],
         }
         return observations, infos
 
@@ -96,7 +98,7 @@ class RobolabEnvironmentManager:
         observations = {
             "text": self._build_play_prompts(),
             "image": self._build_image_lists(),
-            "anchor": text_obs,
+            "anchor": [str(uuid.uuid4()) for _ in range(self.num_processes)],
         }
         return observations, infos
 
@@ -138,6 +140,21 @@ class RobolabEnvironmentManager:
     def close(self):
         self._remote.close()
 
+    def process_images(self, images: List[np.ndarray]) -> List[np.ndarray]:
+        """Downscale images before passing to the VLA."""
+        scale = self.config.env.get("downsample_scale", 1.0)
+        if scale >= 1.0:
+            return images
+        processed_images = []
+        for image in images:
+            resized_image = cv2.resize(
+                image,
+                dsize=(int(image.shape[1] * scale), int(image.shape[0] * scale)),
+                interpolation=cv2.INTER_AREA,
+            )
+            processed_images.append(resized_image)
+        return processed_images
+
     # ------------------------------------------------------------------
     # Image list construction
     # ------------------------------------------------------------------
@@ -163,7 +180,7 @@ class RobolabEnvironmentManager:
             for past_idx in range(self.curr_traj_idx):
                 past = self._traj_images[i].get(past_idx, {})
                 imgs.extend([past[t] for t in sorted(past)])
-            result.append(imgs)
+            result.append(self.process_images(imgs))
         return result
 
     # ------------------------------------------------------------------
@@ -198,7 +215,7 @@ class RobolabEnvironmentManager:
         observations = {
             "text": self._build_play_prompts() if self.curr_turn_idx < self.max_turns else [""] * self.num_processes,
             "image": self._build_image_lists(),
-            "anchor": text_obs,
+            "anchor": [str(uuid.uuid4()) for _ in range(self.num_processes)],
         }
         return observations, rewards, dones, infos
 
@@ -283,17 +300,32 @@ class RobolabEnvironmentManager:
             f"num_processes={self.num_processes})"
         )
 
+    
+    # debug
+    def print_image(self, image: np.ndarray):
+        from PIL import Image
+        image = Image.fromarray(image)
+        image.save("/gscratch/weirdlab/sidhraja/projects/LaMer/debug/debug_image.png")
 
 def make_envs(config, prompt_state=None):
     """Return (train_env_manager, val_env_manager) for RoboLab.
 
     Expects config.env to have:
         - remote_address: "host:port" for training server
-        - remote_val_address: "host:port" for validation server
+        - remote_val_address: "host:port" for validation server (only needed when validation is enabled)
     """
-    train_remote = RemoteEnvironmentManager(config.env.remote_address)
-    val_remote = RemoteEnvironmentManager(config.env.remote_val_address)
+    validation_enabled = (
+        config.trainer.get("val_only", False)
+        or config.trainer.get("val_before_train", True)
+        or config.trainer.get("test_freq", 0) > 0
+    )
 
+    train_remote = RemoteEnvironmentManager(config.env.remote_address)
     envs = RobolabEnvironmentManager(train_remote, config)
-    val_envs = RobolabEnvironmentManager(val_remote, config)
+
+    val_envs = None
+    if validation_enabled:
+        val_remote = RemoteEnvironmentManager(config.env.remote_val_address)
+        val_envs = RobolabEnvironmentManager(val_remote, config)
+
     return envs, val_envs

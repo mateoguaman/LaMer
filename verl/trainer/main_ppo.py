@@ -68,6 +68,10 @@ class TaskRunner:
             # Language Table uses remote envs but needs LaMer-side prompt/projection
             from agent_system.environments.language_table import make_envs
             envs, val_envs = make_envs(config)
+        elif config.env.get('remote', False) and 'robolab' in config.env.env_name.lower():
+            # RoboLab uses remote envs but needs LaMer-side prompt/projection and image history
+            from agent_system.environments.robolab.env_manager import make_envs
+            envs, val_envs = make_envs(config)
         elif config.env.get('remote', False):
             if config.env.get('sharded', False):
                 from agent_system.environments.remote import ShardedRemoteEnvironmentManager

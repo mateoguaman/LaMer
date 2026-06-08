@@ -25,6 +25,7 @@ use_kl_in_reward=${USE_KL_IN_REWARD:-False}
 kl_reward_coef=${KL_REWARD_COEF:-0.001}
 mode="mean_norm"
 reflection_type="history_and_reflection"
+downsample_scale=${DOWNSAMPLE_SCALE:-0.3}
 
 # Max images per prompt: 1 (current obs) + max_turns (curr traj) + num_attempts*max_turns (past)
 limit_images=${LIMIT_IMAGES:-20}
@@ -48,8 +49,8 @@ fi
 ALGO_ARGS=()
 if [ "$ADV_ESTIMATOR" = "gigpo" ]; then
     ALGO_ARGS+=(
-        "+algorithm.step_gamma=0.95"
-        "+algorithm.traj_gamma=0.9"
+        "algorithm.step_gamma=0.95"
+        "algorithm.traj_gamma=0.9"
         "algorithm.gigpo.step_advantage_w=1.0"
         "algorithm.gigpo.mode=$mode"
     )
@@ -59,19 +60,19 @@ if ! python3 -c "import flash_attn" >/dev/null 2>&1; then
     echo "flash-attn not found; installing..."
     pip3 install flash-attn==2.7.4.post1 --no-build-isolation --no-cache-dir
 fi
-
+# set to use_remove_padding to true for increased efficiency
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=$ADV_ESTIMATOR \
     data.train_files=${TRAIN_DATA_PATH:?'Set TRAIN_DATA_PATH'} \
     data.val_files=${VAL_DATA_PATH:?'Set VAL_DATA_PATH'} \
     data.train_batch_size=$train_data_size \
     data.val_batch_size=$val_data_size \
-    data.max_prompt_length=8192 \
+    data.max_prompt_length=32768 \
     data.max_response_length=2048 \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.return_raw_chat=True \
-    actor_rollout_ref.model.path=Qwen/Qwen3-VL-4B-Thinking \
+    actor_rollout_ref.model.path=Qwen/Qwen2.5-VL-3B-Instruct \
     +actor_rollout_ref.model.enable_thinking=True \
     actor_rollout_ref.actor.optim.lr=$learning_rate \
     actor_rollout_ref.model.use_remove_padding=True \
@@ -83,8 +84,8 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
-    actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=$micro_batch_size \
+    actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
     actor_rollout_ref.rollout.name=$ENGINE \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
     actor_rollout_ref.rollout.enable_chunked_prefill=False \
@@ -96,7 +97,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.top_k=20 \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
     actor_rollout_ref.rollout.max_num_batched_tokens=32768 \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=$micro_batch_size \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.use_invalid_action_penalty=True \
     actor_rollout_ref.actor.invalid_action_penalty_coef=0.5 \
@@ -113,13 +114,14 @@ python3 -m verl.trainer.main_ppo \
     env.rollout.n=$group_size \
     env.num_attempts=$num_attempts \
     env.max_turns=$max_turns \
+    +env.downsample_scale=$downsample_scale \
     +env.reflection_type=$reflection_type \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='lamer' \
     trainer.experiment_name=${RUN_NAME:-robolab_lamer_qwen3vl_4b} \
     trainer.default_local_dir=${TRAINER_LOCAL_DIR:-checkpoints/lamer/${RUN_NAME:-robolab_lamer_qwen3vl_4b}} \
-    trainer.n_gpus_per_node=2 \
+    trainer.n_gpus_per_node=4\
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=$test_freq \
@@ -127,8 +129,8 @@ python3 -m verl.trainer.main_ppo \
     trainer.val_before_train=$val_before_train \
     trainer.log_val_generations=$val_data_size \
     trainer.log_train_generations=$train_data_size \
-    trainer.log_train_videos=8 \
-    trainer.log_val_videos=8 \
+    trainer.log_train_videos=1 \
+    trainer.log_val_videos=1 \
     trainer.max_actor_ckpt_to_keep=1 \
     trainer.max_critic_ckpt_to_keep=1 \
     trainer.resume_mode=disable \

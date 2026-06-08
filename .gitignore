@@ -23,3 +23,5 @@ CLAUDE.md
 *.out
 results/
 .env.language_table_local
+debug/
+slurm_logs

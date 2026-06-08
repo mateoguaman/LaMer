@@ -1,15 +1,16 @@
 #!/bin/bash
 #SBATCH --job-name=lamer-robolab
 #SBATCH --account=weirdlab
-#SBATCH --partition=gpu-l40
+#SBATCH --partition=ckpt-g2
+#SBATCH --requeue
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gpus=3
+#SBATCH --gres=gpu:l40s:5
 #SBATCH --cpus-per-task=32
-#SBATCH --mem=100G
+#SBATCH --mem=250G
 #SBATCH --time=24:00:00
-#SBATCH --output=slurm-%x-%j.out
-#SBATCH --error=slurm-%x-%j.err
+#SBATCH --output=/gscratch/scrubbed/sidhraja/slurm_logs/lamer/slurm-%x-%j.out
+#SBATCH --error=/gscratch/scrubbed/sidhraja/slurm_logs/lamer/slurm-%x-%j.err
 
 # GPU layout (3x L40):
 #   GPU 0  — Pi0-5 policy server + RoboLab env server
@@ -28,9 +29,9 @@ set -euo pipefail
 ######################
 ### Config ###########
 ######################
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_LAMER_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-LAMER_DIR="${LAMER_DIR:-${DEFAULT_LAMER_DIR}}"
+#SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#DEFAULT_LAMER_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+LAMER_DIR="${LAMER_DIR:-/gscratch/weirdlab/sidhraja/projects/LaMer}"
 
 ROBOLAB_DIR="${ROBOLAB_DIR:-/gscratch/weirdlab/sidhraja/projects/RoboLab}"
 OPENPI_DIR="${OPENPI_DIR:-/gscratch/weirdlab/sidhraja/projects/openpi}"
@@ -38,14 +39,21 @@ LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
 LAMER_PYTHON="${LAMER_PYTHON:-/gscratch/weirdlab/sidhraja/miniconda3/envs/lamer}"
 
 TASK="${TASK:-BananaInBowlTask}"
-NUM_ENVS="${NUM_ENVS:-1}"
+NUM_ENVS="${NUM_ENVS:-16}"
 MAX_TURNS="${MAX_TURNS:-5}"
 NUM_INNER_STEPS="${NUM_INNER_STEPS:-50}"
-NUM_ATTEMPTS="${NUM_ATTEMPTS:-3}"
-# GRPO: only one group at a time
-GROUP_SIZE="${GROUP_SIZE:-1}"
+NUM_ATTEMPTS="${NUM_ATTEMPTS:-1}"
+# GRPO/GiGPO: one group containing all RoboLab trajectories by default.
+NUM_GROUPS="${NUM_GROUPS:-1}"
+GROUP_SIZE="${GROUP_SIZE:-${NUM_ENVS}}"
+ENABLE_VALIDATION="${ENABLE_VALIDATION:-False}"
+case "${ENABLE_VALIDATION,,}" in
+    1|true|yes|y) ENABLE_VALIDATION=True ;;
+    *) ENABLE_VALIDATION=False ;;
+esac
 
-ADV_ESTIMATOR="${ADV_ESTIMATOR:-grpo}"
+ADV_ESTIMATOR="${ADV_ESTIMATOR:-gigpo}"
+DOWNSAMPLE_SCALE="${DOWNSAMPLE_SCALE:-0.3}"
 RUN_NAME="${RUN_NAME:-robolab_lamer_qwen3vl_4b}"
 CHECKPOINT_ROOT="${CHECKPOINT_ROOT:-${LAMER_DIR}/checkpoints/lamer}"
 
@@ -56,21 +64,17 @@ VAL_SERVER_PORT="${VAL_SERVER_PORT:-50052}"
 RUN_ID="${SLURM_JOB_ID:-$(date +%Y%m%d-%H%M%S)}"
 TRAINER_LOCAL_DIR="${CHECKPOINT_ROOT}/${RUN_NAME}/${RUN_ID}"
 RUN_LOG_PATH="${TRAINER_LOCAL_DIR}/train-${RUN_ID}.log"
-OUTPUT_DIR="${LAMER_DIR}/results/${RUN_NAME}"
 
 # GPU assignment
 SERVERS_GPU=0         # policy server + env servers
-TRAIN_GPUS="1,2"      # LaMer trainer (2 L40s)
+TRAIN_GPUS="1,2,3,4"      # LaMer trainer (2 L40s)
 
 ######################
 ### Setup ############
 ######################
-if [ -z "${CONDA_PREFIX:-}" ]; then
-    module load conda/Miniforge3-25.3.1-3 2>/dev/null || module load conda 2>/dev/null || true
-fi
 module load gcc/13.4.0 2>/dev/null || true
 
-source "$(conda info --base)/etc/profile.d/conda.sh"
+source /gscratch/weirdlab/sidhraja/miniconda3/etc/profile.d/conda.sh
 set +u
 conda activate "${LAMER_CONDA_ENV}"
 set -u
@@ -80,11 +84,21 @@ echo "HOSTNAME: $(hostname)"
 echo "SLURM_JOB_ID: ${SLURM_JOB_ID}"
 echo "LAMER_DIR: ${LAMER_DIR}"
 echo "TASK: ${TASK}"
+echo "NUM_ENVS: ${NUM_ENVS}"
+echo "NUM_GROUPS: ${NUM_GROUPS}"
+echo "GROUP_SIZE: ${GROUP_SIZE}"
+echo "ENABLE_VALIDATION: ${ENABLE_VALIDATION}"
 echo "TRAINER_LOCAL_DIR: ${TRAINER_LOCAL_DIR}"
 echo "SERVERS_GPU: ${SERVERS_GPU}"
 echo "TRAIN_GPUS: ${TRAIN_GPUS}"
+nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader 2>/dev/null || true
 
-mkdir -p "${TRAINER_LOCAL_DIR}" "${OUTPUT_DIR}"
+mkdir -p "${TRAINER_LOCAL_DIR}"
+
+if [ "$((NUM_GROUPS * GROUP_SIZE))" -ne "${NUM_ENVS}" ]; then
+    echo "ERROR: NUM_GROUPS * GROUP_SIZE must equal NUM_ENVS (${NUM_GROUPS} * ${GROUP_SIZE} != ${NUM_ENVS})"
+    exit 1
+fi
 
 ######################
 ### Environment ######
@@ -177,26 +191,31 @@ echo "=== Starting RoboLab train env server on GPU ${SERVERS_GPU}, port ${ENV_SE
 ENV_TRAIN_SERVER_PID=$!
 echo "Train env server PID: ${ENV_TRAIN_SERVER_PID}"
 
-echo ""
-echo "=== Starting RoboLab val env server on GPU ${SERVERS_GPU}, port ${VAL_SERVER_PORT} ==="
-"${ROBOLAB_DIR}/run_apptainer.sh" bash -c "
-    export VIRTUAL_ENV=/workspace/robolab/.venv
-    export PATH=\$VIRTUAL_ENV/bin:\$PATH
-    CUDA_VISIBLE_DEVICES=${SERVERS_GPU} \
-    uv run examples/policy/server_main.py \
-        --policy pi05 \
-        --task ${TASK} \
-        --num-envs ${NUM_ENVS} \
-        --headless \
-        --remote-host localhost \
-        --remote-port ${POLICY_SERVER_PORT} \
-        --server-host 0.0.0.0 \
-        --server-port ${VAL_SERVER_PORT} \
-        --num-inner-steps ${NUM_INNER_STEPS} \
-        --max-turns ${MAX_TURNS}
-" &
-ENV_VAL_SERVER_PID=$!
-echo "Val env server PID: ${ENV_VAL_SERVER_PID}"
+if [ "${ENABLE_VALIDATION}" = "True" ]; then
+    echo ""
+    echo "=== Starting RoboLab val env server on GPU ${SERVERS_GPU}, port ${VAL_SERVER_PORT} ==="
+    "${ROBOLAB_DIR}/run_apptainer.sh" bash -c "
+        export VIRTUAL_ENV=/workspace/robolab/.venv
+        export PATH=\$VIRTUAL_ENV/bin:\$PATH
+        CUDA_VISIBLE_DEVICES=${SERVERS_GPU} \
+        uv run examples/policy/server_main.py \
+            --policy pi05 \
+            --task ${TASK} \
+            --num-envs ${NUM_ENVS} \
+            --headless \
+            --remote-host localhost \
+            --remote-port ${POLICY_SERVER_PORT} \
+            --server-host 0.0.0.0 \
+            --server-port ${VAL_SERVER_PORT} \
+            --num-inner-steps ${NUM_INNER_STEPS} \
+            --max-turns ${MAX_TURNS}
+    " &
+    ENV_VAL_SERVER_PID=$!
+    echo "Val env server PID: ${ENV_VAL_SERVER_PID}"
+else
+    echo ""
+    echo "=== Skipping RoboLab val env server (ENABLE_VALIDATION=False) ==="
+fi
 
 ########################################
 ### Step 3: Wait for servers ###########
@@ -219,9 +238,11 @@ wait_for_port() {
     return 1
 }
 
-wait_for_port "${POLICY_SERVER_PORT}" "Policy server"  || exit 1
+wait_for_port "${POLICY_SERVER_PORT}" "Policy server"    || exit 1
 wait_for_port "${ENV_SERVER_PORT}"    "Train env server" || exit 1
-wait_for_port "${VAL_SERVER_PORT}"    "Val env server"   || exit 1
+if [ "${ENABLE_VALIDATION}" = "True" ]; then
+    wait_for_port "${VAL_SERVER_PORT}" "Val env server" || exit 1
+fi
 
 ########################################
 ### Memory monitor #####################
@@ -244,13 +265,13 @@ echo ""
 echo "=== Preparing data ==="
 cd "${LAMER_DIR}"
 
-TRAIN_NUM_ENVS="${NUM_ENVS}"
-VAL_NUM_ENVS="${NUM_ENVS}"
+TRAIN_NUM_ENVS="${NUM_GROUPS}"
+VAL_NUM_ENVS="${NUM_GROUPS}"
 DATA_LOCAL_DIR="${HOME}/data/verl-agent"
 TRAIN_DATA_PATH="${DATA_LOCAL_DIR}/visual/train.parquet"
 VAL_DATA_PATH="${DATA_LOCAL_DIR}/visual/test.parquet"
 
-python3 -m examples.data_preprocess.prepare \
+"${LAMER_PYTHON}/bin/python" -m examples.data_preprocess.prepare \
     --mode 'visual' \
     --local_dir "${DATA_LOCAL_DIR}" \
     --train_data_size "${TRAIN_NUM_ENVS}" \
@@ -266,13 +287,20 @@ export CUDA_VISIBLE_DEVICES="${TRAIN_GPUS}"
 export TRAIN_DATA_PATH VAL_DATA_PATH
 export TRAIN_NUM_ENVS VAL_NUM_ENVS
 export GROUP_SIZE ADV_ESTIMATOR
-export NUM_ATTEMPTS MAX_TURNS
+export ENABLE_VALIDATION
+export NUM_ATTEMPTS MAX_TURNS DOWNSAMPLE_SCALE
 export RUN_NAME TRAINER_LOCAL_DIR RUN_LOG_PATH
 export ENV_ADDRESS="127.0.0.1:${ENV_SERVER_PORT}"
 export VAL_ADDRESS="127.0.0.1:${VAL_SERVER_PORT}"
-# GRPO: one group at a time — batch equals num envs, micro batch = 1
-export BATCH_SIZE="${TRAIN_NUM_ENVS}"
+export BATCH_SIZE="${NUM_ENVS}"
 export MICRO_BATCH_SIZE=1
+# debugging parameter
+export RAY_DEBUG=legacy
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+set +u
+conda activate "${LAMER_CONDA_ENV}"
+set -u
 
 set +e
 bash "${LAMER_DIR}/examples/robolab/lamer_robolab_slurm.sh"
