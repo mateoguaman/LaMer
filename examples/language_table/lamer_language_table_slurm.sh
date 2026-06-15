@@ -90,6 +90,8 @@ python3 -m verl.trainer.main_ppo \
     reward_model.reward_manager=episode \
     env.env_name=language_table \
     env.seed=0 \
+    +env.start_seed=${START_SEED:-0} \
+    +env.max_seeds=${MAX_SEEDS:-8} \
     +env.remote=True \
     +env.remote_address=$env_address \
     +env.remote_val_address=$val_address \

@@ -30,6 +30,7 @@ REWARD_TYPE="${REWARD_TYPE:-block2block}"
 VLA_POLICY="${VLA_POLICY:-smolvla}"
 ADV_ESTIMATOR="${ADV_ESTIMATOR:-gigpo}"
 MAX_SEEDS="${MAX_SEEDS:-8}"
+START_SEED="${START_SEED:-0}"
 
 if [ -z "${CHECKPOINT_ROOT}" ]; then
     echo "ERROR: CHECKPOINT_ROOT is not set."
@@ -55,6 +56,10 @@ NUM_ATTEMPTS="${NUM_ATTEMPTS:-2}"
 MAX_TURNS="${MAX_TURNS:-2}"
 if ! [[ "${MAX_SEEDS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: MAX_SEEDS must be a positive integer, got '${MAX_SEEDS}'."
+    exit 1
+fi
+if ! [[ "${START_SEED}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: START_SEED must be a non-negative integer, got '${START_SEED}'."
     exit 1
 fi
 
@@ -113,6 +118,7 @@ echo "VLA_CHECKPOINT: ${VLA_CHECKPOINT:-<none>}"
 echo "TRAIN_BLOCK_MODE: ${TRAIN_BLOCK_MODE}"
 echo "VAL_BLOCK_MODE: ${VAL_BLOCK_MODE}"
 echo "MAX_SEEDS: ${MAX_SEEDS}"
+echo "START_SEED: ${START_SEED}"
 echo "CONDA_PKGS_DIRS: ${CONDA_PKGS_DIRS:-<default>}"
 echo "PIP_CACHE_DIR: ${PIP_CACHE_DIR:-<default>}"
 echo "TMPDIR: ${TMPDIR:-<default>}"
@@ -217,7 +223,7 @@ fi
 
 # Train server (background)
 TRAIN_WORKERS=$((TRAIN_NUM_ENVS * GROUP_SIZE))
-echo "Starting train server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=${TRAIN_WORKERS} workers, GPU ${ENV_SERVER_GPU}, blocks ${TRAIN_BLOCK_MODE}, max_seeds ${MAX_SEEDS})..."
+echo "Starting train server on port ${TRAIN_PORT} (${TRAIN_NUM_ENVS}x${GROUP_SIZE}=${TRAIN_WORKERS} workers, GPU ${ENV_SERVER_GPU}, blocks ${TRAIN_BLOCK_MODE}, start_seed ${START_SEED}, max_seeds ${MAX_SEEDS})..."
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
 JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
@@ -232,6 +238,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --reward_kwargs "${REWARD_KWARGS}" \
     ${PREPROCESS_FLAG} \
     --split train \
+    --start_seed ${START_SEED} \
     --max_seeds ${MAX_SEEDS} \
     ${TRAIN_TASK_FLAGS} \
     ${VLA_FLAG} \
@@ -240,7 +247,7 @@ TRAIN_SERVER_PID=$!
 echo "Train server PID: ${TRAIN_SERVER_PID}"
 
 # Validation server (background, group_n=1 — no grouping for eval)
-echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU}, blocks ${VAL_BLOCK_MODE}, max_seeds ${MAX_SEEDS})..."
+echo "Starting validation server on port ${VAL_PORT} (${VAL_NUM_ENVS} envs, GPU ${ENV_SERVER_GPU}, blocks ${VAL_BLOCK_MODE}, start_seed ${START_SEED}, max_seeds ${MAX_SEEDS})..."
 CUDA_VISIBLE_DEVICES=${ENV_SERVER_GPU} \
 JAX_PLATFORMS=cuda \
 XLA_PYTHON_CLIENT_PREALLOCATE=false \
@@ -255,6 +262,7 @@ ${LANGTABLE_PYTHON} -m language_table.lamer.server_main \
     --reward_kwargs "${REWARD_KWARGS}" \
     ${PREPROCESS_FLAG} \
     --split val \
+    --start_seed ${START_SEED} \
     --max_seeds ${MAX_SEEDS} \
     ${VAL_TASK_FLAGS} \
     ${VLA_FLAG} \
