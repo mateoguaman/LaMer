@@ -44,9 +44,9 @@ class EnvResponse:
 # Wire helpers
 # ---------------------------------------------------------------------------
 
-_HEADER_FMT = "!I"  # big-endian unsigned 32-bit int
+_HEADER_FMT = "!Q"  # big-endian unsigned 64-bit int
 _HEADER_SIZE = struct.calcsize(_HEADER_FMT)
-_MAX_MESSAGE_SIZE = 2 ** 32 - 1  # ~4 GB
+_MAX_MESSAGE_SIZE = 2 ** 63 - 1
 
 
 def send_message(sock: socket.socket, obj: Any) -> None:

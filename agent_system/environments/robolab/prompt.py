@@ -1,5 +1,5 @@
 ROBOLAB_PLAY_PROMPT = """
-You are an expert agent controlling a robot arm in a physics simulation.
+You are an expert agent controlling a robot arm in a physics simulation. Stay close to the provided task instruction. Do not do subtask decomposition.
 
 # Task
 {language_instruction}
@@ -18,7 +18,11 @@ The current state of the environment is shown in the image below:
 - Then output exactly one command inside <action> </action> tags.
 
 Example:
-<action>pick up the red block</action>
+<action>Put the lizards in the bin</action>
+<action>Put the bagels on the plate</action>
+<action>Pick up the banana and place it in the bowl</action>
+<action>Put the canned food in the grey bin</action>
+<action>Move the bananas to the bagel plate</action>
 {current_trajectory}
 """
 
@@ -45,13 +49,13 @@ The task was NOT successfully completed.
 """
 
 PAST_TRAJECTORY_AND_REFLECTION_TEMPLATE = """
-On trial #{traj_idx}, you observed the following states:
+On trial #{traj_idx}, you observed the following states and took the following actions:
 {past_trajectory}
 The task was NOT successfully completed. Your reflection is:
 {reflection}"""
 
 HISTORY_ONLY_TEMPLATE = """
-On trial #{traj_idx}, you observed the following states:
+On trial #{traj_idx}, you observed the following states and took the following actions:
 {past_trajectory}
 The task was NOT successfully completed."""
 
@@ -60,12 +64,12 @@ On trial #{traj_idx}, the task was NOT successfully completed. Your reflection i
 {reflection}"""
 
 CURR_TRAJ_AT_TRAJ1 = """
-You have already observed the following states this trial:
+You have already observed the following states and taken the following actions this trial:
 {current_trajectory}
 """
 
 CURR_TRAJ_AT_TRAJ2toN = """
-Currently you're on trial #{traj_idx}. You have already observed the following states:
+Currently you're on trial #{traj_idx}. You have already observed the following states and taken the following actions:
 {current_trajectory}
 """
 

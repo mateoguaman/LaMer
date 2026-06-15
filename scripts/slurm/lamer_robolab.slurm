@@ -5,10 +5,10 @@
 #SBATCH --requeue
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
-#SBATCH --gres=gpu:l40s:5
+#SBATCH --gres=gpu:l40:5
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=250G
-#SBATCH --time=24:00:00
+#SBATCH --time=12:00:00
 #SBATCH --output=/gscratch/scrubbed/sidhraja/slurm_logs/lamer/slurm-%x-%j.out
 #SBATCH --error=/gscratch/scrubbed/sidhraja/slurm_logs/lamer/slurm-%x-%j.err
 
@@ -38,10 +38,10 @@ OPENPI_DIR="${OPENPI_DIR:-/gscratch/weirdlab/sidhraja/projects/openpi}"
 LAMER_CONDA_ENV="${LAMER_CONDA_ENV:-lamer}"
 LAMER_PYTHON="${LAMER_PYTHON:-/gscratch/weirdlab/sidhraja/miniconda3/envs/lamer}"
 
-TASK="${TASK:-BananaInBowlTask}"
+TASK="${TASK:-RedItemsInBinTask}"
 NUM_ENVS="${NUM_ENVS:-16}"
-MAX_TURNS="${MAX_TURNS:-5}"
-NUM_INNER_STEPS="${NUM_INNER_STEPS:-50}"
+MAX_TURNS="${MAX_TURNS:-6}"
+NUM_INNER_STEPS="${NUM_INNER_STEPS:-100}"
 NUM_ATTEMPTS="${NUM_ATTEMPTS:-1}"
 # GRPO/GiGPO: one group containing all RoboLab trajectories by default.
 NUM_GROUPS="${NUM_GROUPS:-1}"

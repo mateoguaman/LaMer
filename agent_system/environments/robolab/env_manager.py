@@ -252,14 +252,25 @@ class RobolabEnvironmentManager:
             if self.curr_turn_idx == 0:
                 curr_traj = ""
             else:
-                n_curr = len([t for t in range(self.curr_turn_idx)
-                               if t in self._traj_images[i].get(self.curr_traj_idx, {})])
-                curr_traj = "\n".join(["<image>"] * n_curr) if n_curr else ""
+                lines = []
+                for t in range(self.curr_turn_idx):
+                    if t in self._traj_images[i].get(self.curr_traj_idx, {}):
+                        lines.append("<image>")
+                        action = self._last_commands[i].get(self.curr_traj_idx, {}).get(t, "")
+                        if action:
+                            lines.append(f"Action: {action}")
+                curr_traj = "\n".join(lines) if lines else ""
 
             past_traj = {}
             for traj_idx in range(self.curr_traj_idx):
-                n_past = len(self._traj_images[i].get(traj_idx, {}))
-                past_traj[traj_idx] = "\n".join(["<image>"] * n_past) if n_past else ""
+                past_imgs = self._traj_images[i].get(traj_idx, {})
+                lines = []
+                for t in sorted(past_imgs.keys()):
+                    lines.append("<image>")
+                    action = self._last_commands[i].get(traj_idx, {}).get(t, "")
+                    if action:
+                        lines.append(f"Action: {action}")
+                past_traj[traj_idx] = "\n".join(lines) if lines else ""
 
             prompt = get_robolab_prompt(
                 phase="play",
@@ -278,9 +289,14 @@ class RobolabEnvironmentManager:
         prompts = []
         for i in range(self.num_processes):
             turn_limit = min(self.curr_turn_idx, self.max_turns - 1)
-            n_curr = len([t for t in range(turn_limit)
-                           if t in self._traj_images[i].get(self.curr_traj_idx, {})])
-            curr_traj = "\n".join(["<image>"] * n_curr) if n_curr else ""
+            lines = []
+            for t in range(turn_limit):
+                if t in self._traj_images[i].get(self.curr_traj_idx, {}):
+                    lines.append("<image>")
+                    action = self._last_commands[i].get(self.curr_traj_idx, {}).get(t, "")
+                    if action:
+                        lines.append(f"Action: {action}")
+            curr_traj = "\n".join(lines) if lines else ""
 
             prompt = get_robolab_prompt(
                 phase="reflect",
